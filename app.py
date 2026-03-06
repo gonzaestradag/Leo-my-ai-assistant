@@ -28,8 +28,9 @@ database_url = os.getenv("DATABASE_URL")
 def get_db_connection():
     return psycopg2.connect(database_url, cursor_factory=RealDictCursor)
 
-# Import calendar helper functions
+# Import calendar and gmail helper functions
 from calendar_helper import get_todays_events, create_event
+from gmail_helper import get_recent_unread_emails, get_urgent_emails
 
 import datetime
 
@@ -44,17 +45,19 @@ You are concise, highly intelligent, and helpful. You receive messages via Whats
 
 Today's exact current date and time in GMT-6 (Mexico timezone) is: {date_str}
 
-You have access to tools that can check the user's Google Calendar and schedule new events.
+You have access to tools that can check the user's Google Calendar, schedule new events, and check their Gmail inbox.
 If the user asks "qué tengo hoy" or "agenda", check their calendar using the get_todays_events tool.
 If the user asks "agendar [evento] [fecha] [hora]" or "crea evento [descripción]", use the create_event tool to schedule it.
 IMPORTANT: The create_event tool requires the summary, start_time, and end_time. 
 If the user ONLY provides a start time (e.g. "mañana a las 3"), assume the event lasts for 1 hour by default to calculate the end_time.
 If they don't provide a date or time at all, ask them for those details before calling the tool.
 Always format start_time and end_time in proper ISO 8601 format with the correct timezone offset (e.g. 2024-05-20T15:00:00-06:00).
+If the user asks "emails" or "correos", check their recent unread emails using the get_recent_unread_emails tool.
+If the user asks "email urgente", check their important emails using the get_urgent_emails tool.
 """
 
 # Define the tools Claude can use
-CALENDAR_TOOLS = [
+JARVIS_TOOLS = [
     {
         "name": "get_todays_events",
         "description": "Obtiene los eventos programados en el calendario para el día de hoy.",
@@ -83,6 +86,22 @@ CALENDAR_TOOLS = [
                 }
             },
             "required": ["summary", "start_time", "end_time"]
+        }
+    },
+    {
+        "name": "get_recent_unread_emails",
+        "description": "Obtiene los 5 correos electrónicos más recientes que no han sido leídos en Gmail.",
+        "input_schema": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    {
+        "name": "get_urgent_emails",
+        "description": "Obtiene los correos electrónicos más recientes marcados como importantes o destacados en Gmail.",
+        "input_schema": {
+            "type": "object",
+            "properties": {}
         }
     }
 ]
@@ -170,7 +189,7 @@ def webhook():
             max_tokens=1000,
             system=get_system_prompt(),
             messages=history,
-            tools=CALENDAR_TOOLS
+            tools=JARVIS_TOOLS
         )
         
         # Check if Claude decided to use a tool
@@ -223,6 +242,10 @@ def process_tool_use(response, history):
             start_time=tool_input.get("start_time"),
             end_time=tool_input.get("end_time")
         )
+    elif tool_name == "get_recent_unread_emails":
+        tool_result = get_recent_unread_emails()
+    elif tool_name == "get_urgent_emails":
+        tool_result = get_urgent_emails()
         
     # Append the result of the tool execution back to history
     history.append({
@@ -243,7 +266,7 @@ def process_tool_use(response, history):
             max_tokens=1000,
             system=get_system_prompt(),
             messages=history,
-            tools=CALENDAR_TOOLS
+            tools=JARVIS_TOOLS
         )
         
         return final_response.content[0].text
