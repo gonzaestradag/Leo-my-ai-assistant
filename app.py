@@ -11,6 +11,11 @@ load_dotenv()
 
 app = Flask(__name__)
 
+# Start Morning Briefing Scheduler
+from scheduler_helper import start_scheduler
+# Avoid running multiple times if using standard Flask reloader locally
+if os.environ.get("WERKZEUG_RUN_MAIN") != "true":
+    start_scheduler()
 # Initialize AI Brain (Claude API)
 anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
 # Anthropic client will automatically pick up ANTHROPIC_API_KEY from environment,
