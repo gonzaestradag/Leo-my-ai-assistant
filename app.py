@@ -26,9 +26,19 @@ def get_db_connection():
 # Import calendar helper functions
 from calendar_helper import get_todays_events, create_event
 
+import datetime
+
 # System Prompt defining Jarvis's persona
-SYSTEM_PROMPT = """You are a personal life assistant named "Jarvis" that helps with everything in the user's life.
+def get_system_prompt():
+    # Set reference time to GMT-6 (Mexico City) 
+    now_mx = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=-6)))
+    date_str = now_mx.strftime("%A, %Y-%m-%d %H:%M:%S GMT-6")
+    
+    return f"""You are a personal life assistant named "Jarvis" that helps with everything in the user's life.
 You are concise, highly intelligent, and helpful. You receive messages via WhatsApp.
+
+Today's exact current date and time in GMT-6 (Mexico timezone) is: {date_str}
+
 You have access to tools that can check the user's Google Calendar and schedule new events.
 If the user asks "qué tengo hoy" or "agenda", check their calendar using the get_todays_events tool.
 If the user asks "agendar [evento] [fecha] [hora]" or "crea evento [descripción]", use the create_event tool to schedule it.
@@ -153,7 +163,7 @@ def webhook():
         response = anthropic_client.messages.create(
             model="claude-sonnet-4-6",
             max_tokens=1000,
-            system=SYSTEM_PROMPT,
+            system=get_system_prompt(),
             messages=history,
             tools=CALENDAR_TOOLS
         )
@@ -226,7 +236,7 @@ def process_tool_use(response, history):
         final_response = anthropic_client.messages.create(
             model="claude-sonnet-4-6",
             max_tokens=1000,
-            system=SYSTEM_PROMPT,
+            system=get_system_prompt(),
             messages=history,
             tools=CALENDAR_TOOLS
         )

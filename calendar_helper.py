@@ -91,11 +91,15 @@ def create_event(summary, start_time, end_time):
     }
 
     try:
+        print(f"DEBUG: Attempting to create event '{summary}' from {start_time} to {end_time} in calendar '{calendar_id}'")
         event = service.events().insert(calendarId=calendar_id, body=event_body).execute()
+        print(f"DEBUG: Success! Event created with link: {event.get('htmlLink')}")
         return f"¡Listo! Evento '{summary}' agendado exitosamente. Enlace: {event.get('htmlLink')}"
     except Exception as e:
-        print(f"Error creating Google Calendar event: {e}")
-        return f"Ocurrió un error al agendar el evento: {summary}."
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"ERROR creating Google Calendar event:\n{error_details}")
+        return f"Ocurrió un error al agendar el evento '{summary}'. Detalles: {str(e)}"
 
 if __name__ == '__main__':
     from dotenv import load_dotenv
