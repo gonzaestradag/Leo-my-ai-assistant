@@ -1,5 +1,7 @@
 import os
-from google.oauth2 import service_account
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 
 # Define the scopes required for reading Gmail
@@ -7,34 +9,46 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 
 def get_gmail_service():
     """
-    Authenticates and returns the Gmail API service using a Service Account.
-    Note: Reading personal Gmail via Service Account requires Domain-Wide Delegation in Google Workspace.
+    Authenticates and returns the Gmail API service using OAuth 2.0.
+    Expects 'credentials.json' (Client ID file) in the project root.
+    Will create 'token.json' after first manual login.
     """
-    credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-    if not credentials_path or not os.path.exists(credentials_path):
-        print(f"Warning: Google credentials not found at {credentials_path}")
-        return None
+    creds = None
+    # 'token.json' stores the user's access and refresh tokens.
+    if os.path.exists('token.json'):
+        try:
+            creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+        except Exception as e:
+            print(f"Error loading token.json: {e}")
+
+    # If there are no (valid) credentials available, let the user log in.
+    if not creds or not creds.valid:
+        try:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            else:
+                if not os.path.exists('credentials.json'):
+                    print("Error: 'credentials.json' NO encontrado. Descarga tu OAuth Client ID desde Google Cloud.")
+                    return None
+                    
+                flow = InstalledAppFlow.from_client_secrets_file(
+                    'credentials.json', SCOPES)
+                # Open browser for authentication
+                creds = flow.run_local_server(port=0)
+                
+            # Save the credentials for the next run
+            with open('token.json', 'w') as token:
+                token.write(creds.to_json())
+            print("Successfully authenticated and saved token.json")
+        except Exception as e:
+            print(f"Autenticación OAuth fallida: {e}")
+            return None
 
     try:
-        creds = service_account.Credentials.from_service_account_file(
-            credentials_path, scopes=SCOPES
-        )
-        
-        user_email = os.getenv("GOOGLE_CALENDAR_ID")
-        # To access a user's Gmail with a service account, we generally need to impersonate them
-        # This requires Google Workspace and domain-wide delegation enabled.
-        if user_email:
-            try:
-                delegated_creds = creds.with_subject(user_email)
-                service = build('gmail', 'v1', credentials=delegated_creds)
-                return service
-            except Exception as e:
-                print(f"Could not impersonate {user_email}, falling back to default creds. Error: {e}")
-                
         service = build('gmail', 'v1', credentials=creds)
         return service
     except Exception as e:
-        print(f"Error initializing Gmail service: {e}")
+        print(f"Error inicializando Gmail service: {e}")
         return None
 
 def get_recent_unread_emails():
@@ -42,13 +56,13 @@ def get_recent_unread_emails():
     Fetches the 5 most recent unread emails.
     """
     service = get_gmail_service()
-    user_id = os.getenv("GOOGLE_CALENDAR_ID", "me")
+    user_id = "me"
     
     if not service:
-        return "No pude conectarme a Gmail para leer tus correos."
+        return "No pude conectarme a Gmail. Faltan credenciales o token de autenticación."
 
     try:
-        print(f"DEBUG: Fetching unread emails for user '{user_id}'")
+        print(f"DEBUG: Fetching unread emails for '{user_id}' via OAuth")
         results = service.users().messages().list(
             userId=user_id, 
             labelIds=['UNREAD'], 
@@ -76,12 +90,7 @@ def get_recent_unread_emails():
     except Exception as e:
         import traceback
         error_details = traceback.format_exc()
-        print(f"ERROR fetching Gmail unread emails:\n{error_details}")
-        
-        # This error commonly occurs if Domain-Wide Delegation is not set up
-        if "Precondition check failed" in str(e) or "Client is unauthorized to retrieve access tokens" in str(e):
-            return "Ocurrió un error de permisos. Recuerda que para leer tu Gmail con una Service Account, necesitas Google Workspace y habilitar 'Domain-Wide Delegation'."
-            
+        print(f"ERROR fetching Gmail unread emails via OAuth:\n{error_details}")
         return f"Ocurrió un error al consultar tus correos. Detalles: {str(e)}"
 
 def get_urgent_emails():
@@ -89,13 +98,13 @@ def get_urgent_emails():
     Fetches the 5 most recent important or starred emails.
     """
     service = get_gmail_service()
-    user_id = os.getenv("GOOGLE_CALENDAR_ID", "me")
+    user_id = "me"
     
     if not service:
         return "No pude conectarme a Gmail para leer tus correos importantes."
 
     try:
-        print(f"DEBUG: Fetching urgent/important emails for user '{user_id}'")
+        print(f"DEBUG: Fetching urgent/important emails for '{user_id}' via OAuth")
         # q parameter allows us to use Gmail search operators
         results = service.users().messages().list(
             userId=user_id, 
@@ -124,10 +133,9 @@ def get_urgent_emails():
     except Exception as e:
         import traceback
         error_details = traceback.format_exc()
-        print(f"ERROR fetching Gmail urgent emails:\n{error_details}")
+        print(f"ERROR fetching Gmail urgent emails via OAuth:\n{error_details}")
         return f"Ocurrió un error al consultar tus correos urgentes. Detalles: {str(e)}"
 
 if __name__ == '__main__':
-    from dotenv import load_dotenv
-    load_dotenv()
+    # Running directly will prompt the OAuth flow if token.json is missing
     print(get_recent_unread_emails())
