@@ -30,7 +30,7 @@ def get_db_connection():
 
 # Import calendar and gmail helper functions
 from calendar_helper import get_todays_events, create_event
-from gmail_helper import get_recent_unread_emails, get_urgent_emails
+from gmail_helper import get_recent_unread_emails, get_urgent_emails, send_email
 
 import datetime
 
@@ -54,6 +54,7 @@ If they don't provide a date or time at all, ask them for those details before c
 Always format start_time and end_time in proper ISO 8601 format with the correct timezone offset (e.g. 2024-05-20T15:00:00-06:00).
 If the user asks "emails" or "correos", check their recent unread emails using the get_recent_unread_emails tool.
 If the user asks "email urgente", check their important emails using the get_urgent_emails tool.
+Si el usuario dice "envía un email a [email] con asunto [asunto] diciéndole que: [mensaje]", usa el tool send_email
 """
 
 # Define the tools Claude can use
@@ -102,6 +103,28 @@ JARVIS_TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {}
+        }
+    },
+    {
+        "name": "send_email",
+        "description": "Envía un correo electrónico a través de Gmail.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "to": {
+                    "type": "string",
+                    "description": "Dirección de correo electrónico del destinatario."
+                },
+                "subject": {
+                    "type": "string",
+                    "description": "El asunto del correo electrónico."
+                },
+                "body": {
+                    "type": "string",
+                    "description": "El cuerpo o contenido del correo electrónico."
+                }
+            },
+            "required": ["to", "subject", "body"]
         }
     }
 ]
@@ -246,6 +269,12 @@ def process_tool_use(response, history):
         tool_result = get_recent_unread_emails()
     elif tool_name == "get_urgent_emails":
         tool_result = get_urgent_emails()
+    elif tool_name == "send_email":
+        tool_result = send_email(
+            to=tool_input.get("to"),
+            subject=tool_input.get("subject"),
+            body=tool_input.get("body")
+        )
         
     # Append the result of the tool execution back to history
     history.append({

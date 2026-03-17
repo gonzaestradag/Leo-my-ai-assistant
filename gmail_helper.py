@@ -4,8 +4,11 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 
-# Define the scopes required for reading Gmail
-SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
+# Define the scopes required for reading and sending Gmail
+SCOPES = [
+    'https://www.googleapis.com/auth/gmail.readonly',
+    'https://www.googleapis.com/auth/gmail.send'
+]
 
 def get_token_path():
     render_path = '/etc/secrets/token.json'
@@ -142,6 +145,22 @@ def get_urgent_emails():
         error_details = traceback.format_exc()
         print(f"ERROR fetching Gmail urgent emails via OAuth:\n{error_details}")
         return f"Ocurrió un error al consultar tus correos urgentes. Detalles: {str(e)}"
+
+def send_email(to, subject, body):
+    service = get_gmail_service()
+    if not service:
+        return "No pude conectarme a Gmail para enviar el correo."
+    try:
+        import base64
+        from email.mime.text import MIMEText
+        message = MIMEText(body)
+        message['to'] = to
+        message['subject'] = subject
+        raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
+        service.users().messages().send(userId='me', body={'raw': raw}).execute()
+        return f"✅ Email enviado a {to} con asunto '{subject}'"
+    except Exception as e:
+        return f"Error enviando email: {str(e)}"
 
 if __name__ == '__main__':
     # Running directly will prompt the OAuth flow if token.json is missing
