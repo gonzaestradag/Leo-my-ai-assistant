@@ -7,6 +7,13 @@ from googleapiclient.discovery import build
 # Define the scopes required for reading Gmail
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 
+def get_token_path():
+    render_path = '/etc/secrets/token.json'
+    local_path = 'token.json'
+    if os.path.exists(render_path):
+        return render_path
+    return local_path
+
 def get_gmail_service():
     """
     Authenticates and returns the Gmail API service using OAuth 2.0.
@@ -15,9 +22,9 @@ def get_gmail_service():
     """
     creds = None
     # 'token.json' stores the user's access and refresh tokens.
-    if os.path.exists('token.json'):
+    if os.path.exists(get_token_path()):
         try:
-            creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+            creds = Credentials.from_authorized_user_file(get_token_path(), SCOPES)
         except Exception as e:
             print(f"Error loading token.json: {e}")
 
@@ -37,7 +44,7 @@ def get_gmail_service():
                 creds = flow.run_local_server(port=0)
                 
             # Save the credentials for the next run
-            with open('token.json', 'w') as token:
+            with open(get_token_path(), 'w') as token:
                 token.write(creds.to_json())
             print("Successfully authenticated and saved token.json")
         except Exception as e:
