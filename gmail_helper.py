@@ -11,10 +11,25 @@ SCOPES = [
 ]
 
 def get_token_path():
-    render_path = '/etc/secrets/token.json'
+    """
+    Returns the path where the token should be read from and written to.
+    On Render, /etc/secrets is read-only. So we must use /tmp/token.json for working access.
+    """
+    tmp_path = '/tmp/token.json'
+    render_secret_path = '/etc/secrets/token.json'
     local_path = 'token.json'
-    if os.path.exists(render_path):
-        return render_path
+    
+    # 1. First, check if we already have an active/refreshed token in /tmp
+    if os.path.exists(tmp_path):
+        return tmp_path
+        
+    # 2. If not, but we are on Render and the secret exists, copy it to /tmp so we can modify it later
+    if os.path.exists(render_secret_path):
+        import shutil
+        shutil.copy2(render_secret_path, tmp_path)
+        return tmp_path
+        
+    # 3. If neither exists, assume we are local or starting fresh.
     return local_path
 
 def get_gmail_service():
@@ -24,12 +39,14 @@ def get_gmail_service():
     Will create 'token.json' after first manual login.
     """
     creds = None
+    token_file = get_token_path()
+    
     # 'token.json' stores the user's access and refresh tokens.
-    if os.path.exists(get_token_path()):
+    if os.path.exists(token_file):
         try:
-            creds = Credentials.from_authorized_user_file(get_token_path(), SCOPES)
+            creds = Credentials.from_authorized_user_file(token_file, SCOPES)
         except Exception as e:
-            print(f"Error loading token.json: {e}")
+            print(f"Error loading {token_file}: {e}")
 
     # If there are no (valid) credentials available, let the user log in.
     if not creds or not creds.valid:
@@ -47,9 +64,10 @@ def get_gmail_service():
                 creds = flow.run_local_server(port=0)
                 
             # Save the credentials for the next run
-            with open(get_token_path(), 'w') as token:
+            token_write_path = get_token_path()
+            with open(token_write_path, 'w') as token:
                 token.write(creds.to_json())
-            print("Successfully authenticated and saved token.json")
+            print(f"Successfully authenticated and saved {token_write_path}")
         except Exception as e:
             print(f"Autenticación OAuth fallida: {e}")
             return None
