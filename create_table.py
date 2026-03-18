@@ -14,6 +14,12 @@ CREATE TABLE IF NOT EXISTS contacts (
     notes TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS email_alerts (
+    id SERIAL PRIMARY KEY,
+    gmail_id VARCHAR(100) UNIQUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 if database_url:

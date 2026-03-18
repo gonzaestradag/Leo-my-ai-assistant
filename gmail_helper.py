@@ -164,6 +164,53 @@ def get_urgent_emails():
         print(f"ERROR fetching Gmail urgent emails via OAuth:\n{error_details}")
         return f"Ocurrió un error al consultar tus correos urgentes. Detalles: {str(e)}"
 
+def check_important_emails():
+    """
+    Fetches unread emails from the last hour and filters them.
+    Returns a list of dicts: [{'id': id, 'sender': sender, 'subject': subject}]
+    Matches if sender contains '@udem.mx' OR sender/subject contains 'urgente'
+    """
+    service = get_gmail_service()
+    if not service:
+        print("No Gmail service available for check_important_emails")
+        return []
+        
+    try:
+        # Fetch unread from the last hour
+        results = service.users().messages().list(
+            userId="me", 
+            q="is:unread newer_than:1h", 
+            maxResults=20
+        ).execute()
+        
+        messages = results.get('messages', [])
+        important_emails = []
+        
+        for msg in messages:
+            msg_data = service.users().messages().get(
+                userId="me", id=msg['id'], format='metadata', metadataHeaders=['From', 'Subject']
+            ).execute()
+            
+            headers = msg_data.get('payload', {}).get('headers', [])
+            subject = next((h['value'] for h in headers if h['name'] == 'Subject'), 'Sin Asunto')
+            sender = next((h['value'] for h in headers if h['name'] == 'From'), 'Desconocido')
+            
+            # Filtering logic
+            sender_lower = sender.lower()
+            subject_lower = subject.lower()
+            
+            if '@udem.mx' in sender_lower or 'urgente' in sender_lower or 'urgente' in subject_lower:
+                important_emails.append({
+                    'id': msg['id'],
+                    'sender': sender,
+                    'subject': subject
+                })
+                
+        return important_emails
+    except Exception as e:
+        print(f"Error in check_important_emails: {e}")
+        return []
+
 def send_email(to, subject, body):
     service = get_gmail_service()
     if not service:
