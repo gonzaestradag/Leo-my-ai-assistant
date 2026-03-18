@@ -55,6 +55,9 @@ Always format start_time and end_time in proper ISO 8601 format with the correct
 If the user asks "emails" or "correos", check their recent unread emails using the get_recent_unread_emails tool.
 If the user asks "email urgente", check their important emails using the get_urgent_emails tool.
 Si el usuario dice "envía un email a [email] con asunto [asunto] diciéndole que: [mensaje]", usa el tool send_email
+If user says 'guarda contacto: [nombre], email: [email]', use save_contact tool.
+If user says 'manda email a [nombre]', use send_email_to_contact tool.
+If user asks about a contact, use get_contact tool.
 """
 
 # Define the tools Claude can use
@@ -126,6 +129,43 @@ JARVIS_TOOLS = [
             },
             "required": ["to", "subject", "body"]
         }
+    },
+    {
+        "name": "save_contact",
+        "description": "Guarda un contacto con nombre y email en la agenda de Jarvis.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Nombre o descripción del contacto (ej. 'maestra de matemáticas')"},
+                "email": {"type": "string", "description": "Email del contacto"},
+                "notes": {"type": "string", "description": "Notas adicionales (opcional)"}
+            },
+            "required": ["name", "email"]
+        }
+    },
+    {
+        "name": "get_contact",
+        "description": "Busca un contacto en la agenda por nombre.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Nombre del contacto a buscar"}
+            },
+            "required": ["name"]
+        }
+    },
+    {
+        "name": "send_email_to_contact",
+        "description": "Busca un contacto en la agenda y le envía un email.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "contact_name": {"type": "string", "description": "Nombre del contacto"},
+                "subject": {"type": "string", "description": "Asunto del email"},
+                "body": {"type": "string", "description": "Cuerpo del mensaje"}
+            },
+            "required": ["contact_name", "subject", "body"]
+        }
     }
 ]
 
@@ -180,6 +220,56 @@ def save_message(phone_number, user_message, bot_response):
     except Exception as e:
         print(f"Error saving message to Database: {e}")
 
+def save_contact(phone_number, name, email, notes=""):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO contacts (phone_number, name, email, notes) VALUES (%s, %s, %s, %s)",
+            (phone_number, name.lower(), email, notes)
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+        return f"✅ Contacto guardado: {name} — {email}"
+    except Exception as e:
+        return f"Error guardando contacto: {str(e)}"
+
+def get_contact(phone_number, name):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT * FROM contacts WHERE phone_number = %s AND name ILIKE %s",
+            (phone_number, f"%{name}%")
+        )
+        contact = cur.fetchone()
+        cur.close()
+        conn.close()
+        if contact:
+            return f"Contacto encontrado: {contact['name']} — {contact['email']}"
+        return "No encontré ningún contacto con ese nombre."
+    except Exception as e:
+        return f"Error buscando contacto: {str(e)}"
+
+def send_email_to_contact(phone_number, contact_name, subject, body):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT * FROM contacts WHERE phone_number = %s AND name ILIKE %s",
+            (phone_number, f"%{contact_name}%")
+        )
+        contact = cur.fetchone()
+        cur.close()
+        conn.close()
+        if not contact:
+            return f"No encontré '{contact_name}' en tu agenda. Agrégalo con: 'Jarvis, guarda contacto: [nombre], email: [email]'"
+        from gmail_helper import send_email
+        return send_email(to=contact['email'], subject=subject, body=body)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
 @app.route("/webhook", methods=["POST"])
 def webhook():
     """
@@ -217,7 +307,7 @@ def webhook():
         
         # Check if Claude decided to use a tool
         if response.stop_reason == "tool_use":
-            bot_reply = process_tool_use(response, history)
+            bot_reply = process_tool_use(response, history, sender_number)
         else:
             bot_reply = response.content[0].text
             
@@ -235,7 +325,7 @@ def webhook():
     
     return str(resp)
 
-def process_tool_use(response, history):
+def process_tool_use(response, history, sender_number):
     """
     Handles executing the local tool and sending the result back to Claude
     to get the final natural language response.
@@ -273,6 +363,25 @@ def process_tool_use(response, history):
         tool_result = send_email(
             to=tool_input.get("to"),
             subject=tool_input.get("subject"),
+            body=tool_input.get("body")
+        )
+    elif tool_name == "save_contact":
+        tool_result = save_contact(
+            phone_number=sender_number, 
+            name=tool_input.get("name"), 
+            email=tool_input.get("email"), 
+            notes=tool_input.get("notes", "")
+        )
+    elif tool_name == "get_contact":
+        tool_result = get_contact(
+            phone_number=sender_number, 
+            name=tool_input.get("name")
+        )
+    elif tool_name == "send_email_to_contact":
+        tool_result = send_email_to_contact(
+            phone_number=sender_number, 
+            contact_name=tool_input.get("contact_name"), 
+            subject=tool_input.get("subject"), 
             body=tool_input.get("body")
         )
         
