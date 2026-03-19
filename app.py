@@ -71,7 +71,18 @@ If user says 'mis gastos', use get_expenses tool.
 If user says 'compré X acciones de TICKER a $PRECIO', use buy_stock.
 If user says 'vendí X acciones de TICKER a $PRECIO', use sell_stock.
 If user says 'mi portafolio' or 'mis acciones', use get_portfolio.
+If user says 'compré X acciones de TICKER a $PRECIO', use buy_stock.
+If user says 'vendí X acciones de TICKER a $PRECIO', use sell_stock.
+If user says 'mi portafolio' or 'mis acciones', use get_portfolio.
 Leo earns $2,500 MXN per week by default. This resets every Monday automatically.
+
+When the user sends an image, analyze it intelligently:
+- If it's an investment portfolio, extract tickers, shares and prices and use buy_stock tool to register them
+- If it's a receipt or expense, extract the amount and category and use add_expense tool
+- If it's a document, summarize its content
+- If it's food, estimate calories and nutritional info
+- If it's anything else, explain what you see in a helpful way
+Always respond in Spanish.
 """
 
 # Define the tools Claude can use
@@ -403,6 +414,20 @@ def complete_task(phone_number, task_id, completed=True):
     except Exception as e:
         return f"Error: {str(e)}"
 
+def download_image(media_url):
+    try:
+        import requests
+        import base64
+        import os
+        account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+        auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+        response = requests.get(media_url, auth=(account_sid, auth_token))
+        image_data = base64.standard_b64encode(response.content).decode("utf-8")
+        return image_data
+    except Exception as e:
+        print(f"Error descargando imagen: {e}")
+        return None
+
 def transcribe_audio(media_url):
     try:
         import requests
@@ -449,28 +474,55 @@ def webhook():
     media_url = request.values.get("MediaUrl0", "")
     media_type = request.values.get("MediaContentType0", "")
     
-    # Si hay audio, transcribirlo
-    if media_url and "audio" in media_type:
-        incoming_msg = transcribe_audio(media_url)
-        if not incoming_msg:
-            incoming_msg = "No pude transcribir el audio."
-    
     # Clean the sender number (Twilio usually sends it in the format: whatsapp:+1234567890)
     if sender_number.startswith("whatsapp:"):
         sender_number = sender_number.replace("whatsapp:", "")
 
-    # If message is empty for some reason, ignore it
-    if not incoming_msg:
-        return "No message body", 200
-
-    # 5. The assistant should remember context of the last 10 messages
+    # The assistant should remember context of the last 10 messages
     history = get_conversation_history(sender_number, limit=5)
     
-    # 2. Add the new incoming message to the conversation history
-    history.append({
-        "role": "user",
-        "content": incoming_msg
-    })
+    if media_url and "image" in media_type:
+        image_data = download_image(media_url)
+        if image_data:
+            user_text = incoming_msg if incoming_msg else "Analiza esta imagen y responde de forma útil. Si es un portafolio de inversiones extrae los datos. Si es un recibo registra el gasto. Si es cualquier otra cosa explícala."
+            history.append({
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": media_type,
+                            "data": image_data
+                        }
+                    },
+                    {"type": "text", "text": user_text}
+                ]
+            })
+            if not incoming_msg:
+                incoming_msg = "[Imagen procesada automáticamene]"
+        else:
+            history.append({"role": "user", "content": "No pude procesar la imagen."})
+            if not incoming_msg:
+                incoming_msg = "[Error al procesar imagen]"
+            
+    elif media_url and "audio" in media_type:
+        incoming_msg = transcribe_audio(media_url)
+        if not incoming_msg:
+            incoming_msg = "No pude transcribir el audio."
+        history.append({
+            "role": "user",
+            "content": incoming_msg
+        })
+        
+    else:
+        # Petición estándar de texto
+        if not incoming_msg:
+            return "No message body", 200
+        history.append({
+            "role": "user",
+            "content": incoming_msg
+        })
     
     try:
         # Step 1: Send the context to Claude API using claude-sonnet-4-6 model, providing the tools
