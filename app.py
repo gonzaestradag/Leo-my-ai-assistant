@@ -83,6 +83,8 @@ When the user sends an image, analyze it intelligently:
 - If it's food, estimate calories and nutritional info
 - If it's anything else, explain what you see in a helpful way
 Always respond in Spanish.
+
+When you see an image with multiple stocks/investments, you MUST call buy_stock tool for EACH stock you see. Do not skip any. Register all positions visible in the image in a single response using multiple tool calls.
 """
 
 # Define the tools Claude can use
@@ -555,109 +557,40 @@ def webhook():
     return str(resp)
 
 def process_tool_use(response, history, sender_number):
-    """
-    Handles executing the local tool and sending the result back to Claude
-    to get the final natural language response.
-    """
-    tool_use_block = next((block for block in response.content if block.type == "tool_use"), None)
+    # Obtener TODOS los bloques tool_use (puede haber múltiples)
+    tool_use_blocks = [block for block in response.content if block.type == "tool_use"]
     
-    if not tool_use_block:
-        return "Hubo un error al procesar la herramienta del calendario."
-        
-    tool_name = tool_use_block.name
-    tool_input = tool_use_block.input
-    tool_id = tool_use_block.id
+    if not tool_use_blocks:
+        return "Hubo un error al procesar la herramienta."
     
-    # Append Claude's partial response (the tool_use request) to history
+    # Agregar respuesta de Claude al historial
     history.append({
         "role": "assistant",
         "content": response.content
     })
     
-    # Execute the actual function
-    tool_result = None
-    if tool_name == "get_todays_events":
-        tool_result = get_todays_events()
-    elif tool_name == "create_event":
-        tool_result = create_event(
-            summary=tool_input.get("summary"),
-            start_time=tool_input.get("start_time"),
-            end_time=tool_input.get("end_time")
-        )
-    elif tool_name == "get_recent_unread_emails":
-        tool_result = get_recent_unread_emails()
-    elif tool_name == "get_urgent_emails":
-        tool_result = get_urgent_emails()
-    elif tool_name == "send_email":
-        tool_result = send_email(
-            to=tool_input.get("to"),
-            subject=tool_input.get("subject"),
-            body=tool_input.get("body")
-        )
-    elif tool_name == "save_contact":
-        tool_result = save_contact(
-            phone_number=sender_number, 
-            name=tool_input.get("name"), 
-            email=tool_input.get("email"), 
-            notes=tool_input.get("notes", "")
-        )
-    elif tool_name == "get_contact":
-        tool_result = get_contact(
-            phone_number=sender_number, 
-            name=tool_input.get("name")
-        )
-    elif tool_name == "send_email_to_contact":
-        tool_result = send_email_to_contact(
-            phone_number=sender_number, 
-            contact_name=tool_input.get("contact_name"), 
-            subject=tool_input.get("subject"), 
-            body=tool_input.get("body")
-        )
-    elif tool_name == "add_task":
-        tool_result = add_task(phone_number=sender_number, task=tool_input.get("task"))
-    elif tool_name == "get_tasks":
-        tool_result = get_tasks(phone_number=sender_number)
-    elif tool_name == "complete_task":
-        tool_result = complete_task(
-            phone_number=sender_number, 
-            task_id=tool_input.get("task_id"), 
-            completed=tool_input.get("completed", True)
-        )
-    elif tool_name == "set_salary":
-        tool_result = set_salary(phone_number=sender_number, amount=tool_input.get("amount"))
-    elif tool_name == "get_balance":
-        tool_result = get_balance(phone_number=sender_number)
-    elif tool_name == "add_fixed_expense":
-        tool_result = add_fixed_expense(
-            phone_number=sender_number, 
-            name=tool_input.get("name"), 
-            amount=tool_input.get("amount"), 
-            frequency=tool_input.get("frequency")
-        )
-    elif tool_name == "buy_stock":
-        tool_result = add_position(phone_number=sender_number, ticker=tool_input.get("ticker"), shares=tool_input.get("shares"), price=tool_input.get("price"))
-    elif tool_name == "sell_stock":
-        tool_result = remove_position(phone_number=sender_number, ticker=tool_input.get("ticker"), shares=tool_input.get("shares"), price=tool_input.get("price"))
-    elif tool_name == "get_portfolio":
-        tool_result = get_portfolio_summary(phone_number=sender_number)
-    elif tool_name == "add_expense":
-        tool_result = add_expense(phone_number=sender_number, amount=tool_input.get("amount"), category=tool_input.get("category"), description=tool_input.get("description", ""))
-    elif tool_name == "get_expenses":
-        tool_result = get_expenses_summary(phone_number=sender_number)
+    # Ejecutar TODAS las herramientas y recopilar resultados
+    tool_results = []
+    for tool_use_block in tool_use_blocks:
+        tool_name = tool_use_block.name
+        tool_input = tool_use_block.input
+        tool_id = tool_use_block.id
         
-    # Append the result of the tool execution back to history
+        tool_result = execute_tool(tool_name, tool_input, sender_number)
+        
+        tool_results.append({
+            "type": "tool_result",
+            "tool_use_id": tool_id,
+            "content": str(tool_result)
+        })
+    
+    # Agregar todos los resultados al historial
     history.append({
         "role": "user",
-        "content": [
-            {
-                "type": "tool_result",
-                "tool_use_id": tool_id,
-                "content": str(tool_result),
-            }
-        ]
+        "content": tool_results
     })
     
-    # Get the final natural language response from Claude
+    # Obtener respuesta final de Claude
     try:
         final_response = anthropic_client.messages.create(
             model="claude-sonnet-4-6",
@@ -666,11 +599,52 @@ def process_tool_use(response, history, sender_number):
             messages=history,
             tools=JARVIS_TOOLS
         )
-        
         return final_response.content[0].text
     except Exception as e:
-        print(f"Error getting final response after tool use: {e}")
-        return str(tool_result) # Fallback to just returning the raw tool output if NLP fails
+        print(f"Error getting final response: {e}")
+        return "\n".join([r['content'] for r in tool_results])
+
+def execute_tool(tool_name, tool_input, sender_number):
+    if tool_name == "get_todays_events":
+        return get_todays_events()
+    elif tool_name == "create_event":
+        return create_event(summary=tool_input.get("summary"), start_time=tool_input.get("start_time"), end_time=tool_input.get("end_time"))
+    elif tool_name == "get_recent_unread_emails":
+        return get_recent_unread_emails()
+    elif tool_name == "get_urgent_emails":
+        return get_urgent_emails()
+    elif tool_name == "send_email":
+        return send_email(to=tool_input.get("to"), subject=tool_input.get("subject"), body=tool_input.get("body"))
+    elif tool_name == "save_contact":
+        return save_contact(phone_number=sender_number, name=tool_input.get("name"), email=tool_input.get("email"), notes=tool_input.get("notes", ""))
+    elif tool_name == "get_contact":
+        return get_contact(phone_number=sender_number, name=tool_input.get("name"))
+    elif tool_name == "send_email_to_contact":
+        return send_email_to_contact(phone_number=sender_number, contact_name=tool_input.get("contact_name"), subject=tool_input.get("subject"), body=tool_input.get("body"))
+    elif tool_name == "add_task":
+        return add_task(phone_number=sender_number, task=tool_input.get("task"))
+    elif tool_name == "get_tasks":
+        return get_tasks(phone_number=sender_number)
+    elif tool_name == "complete_task":
+        return complete_task(phone_number=sender_number, task_id=tool_input.get("task_id"), completed=tool_input.get("completed", True))
+    elif tool_name == "buy_stock":
+        return add_position(phone_number=sender_number, ticker=tool_input.get("ticker"), shares=tool_input.get("shares"), price=tool_input.get("price"))
+    elif tool_name == "sell_stock":
+        return remove_position(phone_number=sender_number, ticker=tool_input.get("ticker"), shares=tool_input.get("shares"), price=tool_input.get("price"))
+    elif tool_name == "get_portfolio":
+        return get_portfolio_summary(phone_number=sender_number)
+    elif tool_name == "add_expense":
+        return add_expense(phone_number=sender_number, amount=tool_input.get("amount"), category=tool_input.get("category"), description=tool_input.get("description", ""))
+    elif tool_name == "get_expenses":
+        return get_expenses_summary(phone_number=sender_number)
+    elif tool_name == "set_salary":
+        return set_salary(phone_number=sender_number, amount=tool_input.get("amount"))
+    elif tool_name == "get_balance":
+        return get_balance(phone_number=sender_number)
+    elif tool_name == "add_fixed_expense":
+        return add_fixed_expense(phone_number=sender_number, name=tool_input.get("name"), amount=tool_input.get("amount"), frequency=tool_input.get("frequency"))
+    else:
+        return f"Herramienta {tool_name} no reconocida."
 
 # Healthcheck route useful for Render
 @app.route("/", methods=["GET"])
