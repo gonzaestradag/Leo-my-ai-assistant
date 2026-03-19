@@ -557,40 +557,30 @@ def webhook():
     return str(resp)
 
 def process_tool_use(response, history, sender_number):
-    # Obtener TODOS los bloques tool_use (puede haber múltiples)
-    tool_use_blocks = [block for block in response.content if block.type == "tool_use"]
-    
-    if not tool_use_blocks:
-        return "Hubo un error al procesar la herramienta."
-    
-    # Agregar respuesta de Claude al historial
+    # Agregar respuesta completa de Claude al historial
     history.append({
         "role": "assistant",
         "content": response.content
     })
     
-    # Ejecutar TODAS las herramientas y recopilar resultados
+    # Recopilar resultados de TODAS las herramientas en un solo mensaje
     tool_results = []
-    for tool_use_block in tool_use_blocks:
-        tool_name = tool_use_block.name
-        tool_input = tool_use_block.input
-        tool_id = tool_use_block.id
-        
-        tool_result = execute_tool(tool_name, tool_input, sender_number)
-        
-        tool_results.append({
-            "type": "tool_result",
-            "tool_use_id": tool_id,
-            "content": str(tool_result)
-        })
+    for block in response.content:
+        if block.type == "tool_use":
+            tool_result = execute_tool(block.name, block.input, sender_number)
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": block.id,
+                "content": str(tool_result)
+            })
     
-    # Agregar todos los resultados al historial
+    # Agregar TODOS los resultados en UN SOLO mensaje de usuario
     history.append({
         "role": "user",
         "content": tool_results
     })
     
-    # Obtener respuesta final de Claude
+    # Obtener respuesta final
     try:
         final_response = anthropic_client.messages.create(
             model="claude-sonnet-4-6",
@@ -599,10 +589,14 @@ def process_tool_use(response, history, sender_number):
             messages=history,
             tools=JARVIS_TOOLS
         )
+        # Si Claude quiere usar más herramientas, procesarlas recursivamente
+        if final_response.stop_reason == "tool_use":
+            return process_tool_use(final_response, history, sender_number)
         return final_response.content[0].text
     except Exception as e:
         print(f"Error getting final response: {e}")
-        return "\n".join([r['content'] for r in tool_results])
+        results_text = "\n".join([r['content'] for r in tool_results])
+        return results_text
 
 def execute_tool(tool_name, tool_input, sender_number):
     if tool_name == "get_todays_events":
