@@ -6,17 +6,58 @@ from twilio.rest import Client
 from calendar_helper import get_todays_events
 import psycopg2
 
+def get_weather():
+    try:
+        import requests
+        # Coordenadas de Monterrey, México
+        url = "https://api.open-meteo.com/v1/forecast?latitude=25.6866&longitude=-100.3161&current=temperature_2m,weathercode,windspeed_10m&timezone=America%2FMexico_City&temperature_unit=celsius"
+        response = requests.get(url, timeout=5)
+        data = response.json()
+        temp = data['current']['temperature_2m']
+        code = data['current']['weathercode']
+        wind = data['current']['windspeed_10m']
+        weather_descriptions = {
+            0: "☀️ Despejado", 1: "🌤️ Mayormente despejado", 2: "⛅ Parcialmente nublado",
+            3: "☁️ Nublado", 45: "🌫️ Neblina", 48: "🌫️ Neblina",
+            51: "🌦️ Llovizna", 61: "🌧️ Lluvia", 71: "❄️ Nieve",
+            80: "🌧️ Chubascos", 95: "⛈️ Tormenta"
+        }
+        desc = weather_descriptions.get(code, "🌡️ Variable")
+        return f"{desc} | {temp}°C | Viento: {wind} km/h"
+    except Exception as e:
+        return "Clima no disponible"
+
+def get_news():
+    try:
+        import requests
+        import xml.etree.ElementTree as ET
+        url = "https://news.google.com/rss?hl=es-419&gl=MX&ceid=MX:es-419"
+        response = requests.get(url, timeout=5)
+        root = ET.fromstring(response.content)
+        items = root.findall('.//item')[:3]
+        news_list = []
+        for item in items:
+            title = item.find('title').text
+            # Limpiar el título quitando el nombre del medio al final
+            if ' - ' in title:
+                title = title.rsplit(' - ', 1)[0]
+            news_list.append(f"• {title}")
+        return "\n".join(news_list)
+    except Exception as e:
+        return "Noticias no disponibles"
+
 def send_morning_briefing():
     """
-    Fetches today's events and sends a WhatsApp message summarizing the day.
+    Fetches today's events, tasks, weather, and news, and sends a WhatsApp message summarizing the day.
     """
     print("Executing Morning Briefing Job...")
     
     # 1. Fetch Today's Events
     agenda = get_todays_events()
-    
-    # 2. Format Message
-    message_body = "☀️ *Buenos días, Jarvis aquí con tu resumen del día:*\n\n"
+    if "No tienes ningún evento" in agenda or "No pude conectarme" in agenda or "Ocurrió un error" in agenda:
+        eventos_str = "Sin eventos hoy"
+    else:
+        eventos_str = agenda
     
     # 2. Fetch Today's Tasks
     target_number = "5218129354808"
@@ -31,34 +72,43 @@ def send_morning_briefing():
             cur.close()
             conn.close()
             if tasks:
-                tasks_str = "📋 *Tus tareas programadas para hoy:*\n"
+                tasks_list = []
                 for t in tasks:
                     status = "✅" if t['completed'] else "⏳"
-                    tasks_str += f"{status} #{t['id']} — {t['task']}\n"
-                tasks_str += "\n"
+                    tasks_list.append(f"{status} #{t['id']} — {t['task']}")
+                tasks_str = "\n".join(tasks_list)
         except Exception as e:
             print(f"Error fetching tasks for morning briefing: {e}")
             
-    if "No tienes ningún evento" in agenda or "No pude conectarme" in agenda or "Ocurrió un error" in agenda:
-        message_body += "No tienes eventos programados para hoy en tu calendario. "
-    else:
-        # agenda string already contains the formatted events list from calendar_helper
-        message_body += agenda + "\n\n"
+    if not tasks_str:
+        tasks_str = "Sin pendientes"
         
-    if tasks_str:
-        message_body += tasks_str
-    else:
-        message_body += "No tienes tareas pendientes para hoy. "
-        
-    message_body += "\n¡Que tengas un excelente y productivo día!"
+    # 3. Fetch Weather & News
+    clima = get_weather()
+    noticias = get_news()
     
-    # 3. Send via Twilio
+    # 4. Format Message
+    message_body = f"""☀️ *Buenos días, Leo! Aquí tu resumen del día:*
+
+📅 *Eventos de hoy:*
+{eventos_str}
+
+✅ *Pendientes de hoy:*
+{tasks_str}
+
+🌤️ *Clima en Monterrey:*
+{clima}
+
+📰 *Noticias de hoy:*
+{noticias}
+
+¡Que tengas un excelente día! 💪"""
+    
+    # 5. Send via Twilio
     account_sid = os.getenv("TWILIO_ACCOUNT_SID")
     auth_token = os.getenv("TWILIO_AUTH_TOKEN")
     twilio_number = os.getenv("TWILIO_WHATSAPP_NUMBER")
-    
-    # The specific number the user requested
-    target_number = "whatsapp:+5218129354808"
+    target_twilio_number = "whatsapp:+5218129354808"
     
     if not all([account_sid, auth_token, twilio_number]):
         print("Error: Twilio credentials not fully configured in environment variables.")
@@ -69,7 +119,7 @@ def send_morning_briefing():
         message = client.messages.create(
             from_=twilio_number,
             body=message_body,
-            to=target_number
+            to=target_twilio_number
         )
         print(f"Morning Briefing sent successfully! Message SID: {message.sid}")
     except Exception as e:
