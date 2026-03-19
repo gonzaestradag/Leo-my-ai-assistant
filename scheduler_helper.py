@@ -287,6 +287,52 @@ def send_monthly_report():
     except Exception as e:
         print(f"Error in send_monthly_report: {e}")
 
+def reset_weekly_salary():
+    print("Executing Weekly Salary Reset Job...")
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url: return
+    try:
+        conn = psycopg2.connect(database_url, cursor_factory=psycopg2.extras.RealDictCursor)
+        cur = conn.cursor()
+        
+        phone = "5218129354808"
+        amount = 2500.00
+        # Insert this week's salary
+        cur.execute("INSERT INTO salary (phone_number, amount) VALUES (%s, %s)", (phone, amount))
+        conn.commit()
+        print(f"Weekly salary of {amount} registered for {phone}.")
+            
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"Error in reset_weekly_salary: {e}")
+
+def send_portfolio_weekly_report():
+    print("Executing Weekly Portfolio Report Job...")
+    database_url = os.getenv("DATABASE_URL")
+    account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+    auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+    twilio_number = os.getenv("TWILIO_WHATSAPP_NUMBER")
+    target_number = "whatsapp:+5218129354808"
+    
+    if not all([database_url, account_sid, auth_token, twilio_number]):
+        return
+        
+    client = Client(account_sid, auth_token)
+    try:
+        from finance_helper import get_weekly_report
+        phone = "5218129354808"
+        report_text = get_weekly_report(phone)
+        if report_text and "No tienes acciones" not in report_text:
+            client.messages.create(
+                from_=twilio_number,
+                body=report_text,
+                to=target_number
+            )
+            print("Weekly portfolio report sent.")
+    except Exception as e:
+        print(f"Error in send_portfolio_weekly_report: {e}")
+
 def start_scheduler():
     """
     Initializes and starts the APScheduler.
@@ -343,6 +389,28 @@ def start_scheduler():
         hour=9,
         minute=0,
         id="monthly_report_job",
+        replace_existing=True
+    )
+    
+    # Schedule weekly salary reset every Monday at 00:00
+    scheduler.add_job(
+        func=reset_weekly_salary,
+        trigger="cron",
+        day_of_week="mon",
+        hour=0,
+        minute=0,
+        id="weekly_salary_reset_job",
+        replace_existing=True
+    )
+    
+    # Schedule weekly portfolio report every Sunday at 8:00 PM
+    scheduler.add_job(
+        func=send_portfolio_weekly_report,
+        trigger="cron",
+        day_of_week="sun",
+        hour=20,
+        minute=0,
+        id="weekly_portfolio_report_job",
         replace_existing=True
     )
     

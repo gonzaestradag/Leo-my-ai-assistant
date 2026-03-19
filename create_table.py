@@ -38,6 +38,42 @@ CREATE TABLE IF NOT EXISTS task_stats (
     completed_tasks INTEGER,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS salary (
+    id SERIAL PRIMARY KEY,
+    phone_number VARCHAR(20),
+    amount DECIMAL(10,2),
+    week_date DATE DEFAULT CURRENT_DATE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS fixed_expenses (
+    id SERIAL PRIMARY KEY,
+    phone_number VARCHAR(20),
+    name VARCHAR(100),
+    amount DECIMAL(10,2),
+    frequency VARCHAR(20),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS portfolio (
+    id SERIAL PRIMARY KEY,
+    phone_number VARCHAR(20),
+    ticker VARCHAR(10),
+    shares DECIMAL(10,4),
+    avg_price DECIMAL(10,2),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS expenses (
+    id SERIAL PRIMARY KEY,
+    phone_number VARCHAR(20),
+    amount DECIMAL(10,2),
+    category VARCHAR(50),
+    description TEXT,
+    expense_date DATE DEFAULT CURRENT_DATE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 if database_url:

@@ -31,6 +31,7 @@ def get_db_connection():
 # Import calendar and gmail helper functions
 from calendar_helper import get_todays_events, create_event
 from gmail_helper import get_recent_unread_emails, get_urgent_emails, send_email
+from finance_helper import set_salary, get_balance, add_fixed_expense, add_position, remove_position, get_portfolio_summary, add_expense, get_expenses_summary
 
 import datetime
 
@@ -62,6 +63,15 @@ If user says 'agrega tarea: [tarea]' or 'agregar pendiente: [tarea]', use add_ta
 If user says 'mis tareas' or 'pendientes de hoy', use get_tasks.
 If user says 'listo #[id]' or 'cumplí #[id]', use complete_task with completed=True.
 If user says 'no cumplí #[id]', use complete_task with completed=False.
+If user says 'esta semana recibí $X' or 'mi sueldo es $X', use set_salary tool.
+If user says 'cuánto me queda' or 'mi balance', use get_balance tool.
+If user says 'agrega gasto fijo: [nombre] $[monto] [frecuencia]', use add_fixed_expense tool.
+If user says 'gasté $X en [categoria]' or 'agrega gasto', use add_expense tool.
+If user says 'mis gastos', use get_expenses tool.
+If user says 'compré X acciones de TICKER a $PRECIO', use buy_stock.
+If user says 'vendí X acciones de TICKER a $PRECIO', use sell_stock.
+If user says 'mi portafolio' or 'mis acciones', use get_portfolio.
+Leo earns $2,500 MXN per week by default. This resets every Monday automatically.
 """
 
 # Define the tools Claude can use
@@ -198,7 +208,41 @@ JARVIS_TOOLS = [
             },
             "required": ["task_id", "completed"]
         }
-    }
+    },
+    {
+        "name": "set_salary",
+        "description": "Registra el sueldo semanal del usuario.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "amount": {"type": "number", "description": "Monto del sueldo semanal"}
+            },
+            "required": ["amount"]
+        }
+    },
+    {
+        "name": "get_balance",
+        "description": "Muestra el balance semanal: sueldo, gastos y disponible.",
+        "input_schema": {"type": "object", "properties": {}}
+    },
+    {
+        "name": "add_fixed_expense",
+        "description": "Agrega un gasto fijo recurrente.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Nombre del gasto fijo"},
+                "amount": {"type": "number", "description": "Monto"},
+                "frequency": {"type": "string", "description": "Frecuencia: semanal, quincenal, mensual"}
+            },
+            "required": ["name", "amount", "frequency"]
+        }
+    },
+    {"name": "buy_stock", "description": "Registra compra de acciones.", "input_schema": {"type": "object", "properties": {"ticker": {"type": "string"}, "shares": {"type": "number"}, "price": {"type": "number"}}, "required": ["ticker", "shares", "price"]}},
+    {"name": "sell_stock", "description": "Registra venta de acciones.", "input_schema": {"type": "object", "properties": {"ticker": {"type": "string"}, "shares": {"type": "number"}, "price": {"type": "number"}}, "required": ["ticker", "shares", "price"]}},
+    {"name": "get_portfolio", "description": "Muestra portafolio con precios actuales y ganancias/pérdidas.", "input_schema": {"type": "object", "properties": {}}},
+    {"name": "add_expense", "description": "Registra un gasto.", "input_schema": {"type": "object", "properties": {"amount": {"type": "number"}, "category": {"type": "string"}, "description": {"type": "string"}}, "required": ["amount", "category"]}},
+    {"name": "get_expenses", "description": "Muestra gastos del día.", "input_schema": {"type": "object", "properties": {}}}
 ]
 
 def get_conversation_history(phone_number, limit=5):
@@ -527,6 +571,27 @@ def process_tool_use(response, history, sender_number):
             task_id=tool_input.get("task_id"), 
             completed=tool_input.get("completed", True)
         )
+    elif tool_name == "set_salary":
+        tool_result = set_salary(phone_number=sender_number, amount=tool_input.get("amount"))
+    elif tool_name == "get_balance":
+        tool_result = get_balance(phone_number=sender_number)
+    elif tool_name == "add_fixed_expense":
+        tool_result = add_fixed_expense(
+            phone_number=sender_number, 
+            name=tool_input.get("name"), 
+            amount=tool_input.get("amount"), 
+            frequency=tool_input.get("frequency")
+        )
+    elif tool_name == "buy_stock":
+        tool_result = add_position(phone_number=sender_number, ticker=tool_input.get("ticker"), shares=tool_input.get("shares"), price=tool_input.get("price"))
+    elif tool_name == "sell_stock":
+        tool_result = remove_position(phone_number=sender_number, ticker=tool_input.get("ticker"), shares=tool_input.get("shares"), price=tool_input.get("price"))
+    elif tool_name == "get_portfolio":
+        tool_result = get_portfolio_summary(phone_number=sender_number)
+    elif tool_name == "add_expense":
+        tool_result = add_expense(phone_number=sender_number, amount=tool_input.get("amount"), category=tool_input.get("category"), description=tool_input.get("description", ""))
+    elif tool_name == "get_expenses":
+        tool_result = get_expenses_summary(phone_number=sender_number)
         
     # Append the result of the tool execution back to history
     history.append({
