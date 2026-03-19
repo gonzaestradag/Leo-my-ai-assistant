@@ -58,6 +58,10 @@ Si el usuario dice "envía un email a [email] con asunto [asunto] diciéndole qu
 If user says 'guarda contacto: [nombre], email: [email]', use save_contact tool.
 If user says 'manda email a [nombre]', use send_email_to_contact tool.
 If user asks about a contact, use get_contact tool.
+If user says 'agrega tarea: [tarea]' or 'agregar pendiente: [tarea]', use add_task.
+If user says 'mis tareas' or 'pendientes de hoy', use get_tasks.
+If user says 'listo #[id]' or 'cumplí #[id]', use complete_task with completed=True.
+If user says 'no cumplí #[id]', use complete_task with completed=False.
 """
 
 # Define the tools Claude can use
@@ -166,6 +170,34 @@ JARVIS_TOOLS = [
             },
             "required": ["contact_name", "subject", "body"]
         }
+    },
+    {
+        "name": "add_task",
+        "description": "Agrega una tarea a la lista de pendientes del día.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task": {"type": "string", "description": "Descripción de la tarea"}
+            },
+            "required": ["task"]
+        }
+    },
+    {
+        "name": "get_tasks",
+        "description": "Muestra todas las tareas pendientes del día.",
+        "input_schema": {"type": "object", "properties": {}}
+    },
+    {
+        "name": "complete_task",
+        "description": "Marca una tarea como completada o no completada.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "integer", "description": "ID de la tarea"},
+                "completed": {"type": "boolean", "description": "True si cumplida, False si no"}
+            },
+            "required": ["task_id", "completed"]
+        }
     }
 ]
 
@@ -267,6 +299,63 @@ def send_email_to_contact(phone_number, contact_name, subject, body):
             return f"No encontré '{contact_name}' en tu agenda. Agrégalo con: 'Jarvis, guarda contacto: [nombre], email: [email]'"
         from gmail_helper import send_email
         return send_email(to=contact['email'], subject=subject, body=body)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+def add_task(phone_number, task):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO tasks (phone_number, task, task_date) VALUES (%s, %s, CURRENT_DATE) RETURNING id",
+            (phone_number, task)
+        )
+        # Assuming RealDictCursor is active, it returns dict-like objects
+        task_id = cur.fetchone()['id']
+        conn.commit()
+        cur.close()
+        conn.close()
+        return f"✅ Tarea #{task_id} agregada: {task}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+def get_tasks(phone_number):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT * FROM tasks WHERE phone_number = %s AND task_date = CURRENT_DATE ORDER BY created_at ASC",
+            (phone_number,)
+        )
+        tasks = cur.fetchall()
+        cur.close()
+        conn.close()
+        if not tasks:
+            return "No tienes tareas para hoy. ¡Agrega algo!"
+        task_list = ["📋 *Tus tareas de hoy:*"]
+        for t in tasks:
+            status = "✅" if t['completed'] else "⏳"
+            task_list.append(f"{status} #{t['id']} — {t['task']}")
+        return "\n".join(task_list)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+def complete_task(phone_number, task_id, completed=True):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE tasks SET completed = %s WHERE id = %s AND phone_number = %s RETURNING task",
+            (completed, task_id, phone_number)
+        )
+        task = cur.fetchone()
+        conn.commit()
+        cur.close()
+        conn.close()
+        if task:
+            emoji = "✅" if completed else "❌"
+            return f"{emoji} Tarea actualizada: {task['task']}"
+        return "No encontré esa tarea."
     except Exception as e:
         return f"Error: {str(e)}"
 
@@ -383,6 +472,16 @@ def process_tool_use(response, history, sender_number):
             contact_name=tool_input.get("contact_name"), 
             subject=tool_input.get("subject"), 
             body=tool_input.get("body")
+        )
+    elif tool_name == "add_task":
+        tool_result = add_task(phone_number=sender_number, task=tool_input.get("task"))
+    elif tool_name == "get_tasks":
+        tool_result = get_tasks(phone_number=sender_number)
+    elif tool_name == "complete_task":
+        tool_result = complete_task(
+            phone_number=sender_number, 
+            task_id=tool_input.get("task_id"), 
+            completed=tool_input.get("completed", True)
         )
         
     # Append the result of the tool execution back to history

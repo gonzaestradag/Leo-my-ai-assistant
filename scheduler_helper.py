@@ -1,6 +1,7 @@
 import os
 from apscheduler.schedulers.background import BackgroundScheduler
 import pytz
+import psycopg2.extras
 from twilio.rest import Client
 from calendar_helper import get_todays_events
 import psycopg2
@@ -17,11 +18,39 @@ def send_morning_briefing():
     # 2. Format Message
     message_body = "☀️ *Buenos días, Jarvis aquí con tu resumen del día:*\n\n"
     
+    # 2. Fetch Today's Tasks
+    target_number = "5218129354808"
+    database_url = os.getenv("DATABASE_URL")
+    tasks_str = ""
+    if database_url:
+        try:
+            conn = psycopg2.connect(database_url, cursor_factory=psycopg2.extras.RealDictCursor)
+            cur = conn.cursor()
+            cur.execute("SELECT * FROM tasks WHERE phone_number = %s AND task_date = CURRENT_DATE ORDER BY created_at ASC", (target_number,))
+            tasks = cur.fetchall()
+            cur.close()
+            conn.close()
+            if tasks:
+                tasks_str = "📋 *Tus tareas programadas para hoy:*\n"
+                for t in tasks:
+                    status = "✅" if t['completed'] else "⏳"
+                    tasks_str += f"{status} #{t['id']} — {t['task']}\n"
+                tasks_str += "\n"
+        except Exception as e:
+            print(f"Error fetching tasks for morning briefing: {e}")
+            
     if "No tienes ningún evento" in agenda or "No pude conectarme" in agenda or "Ocurrió un error" in agenda:
-        message_body += "No tienes eventos programados para hoy en tu calendario. ¡Que tengas un excelente día y aprovecha para relajarte o adelantar pendientes!"
+        message_body += "No tienes eventos programados para hoy en tu calendario. "
     else:
         # agenda string already contains the formatted events list from calendar_helper
-        message_body += agenda + "\n\n¡Que tengas un excelente y productivo día!"
+        message_body += agenda + "\n\n"
+        
+    if tasks_str:
+        message_body += tasks_str
+    else:
+        message_body += "No tienes tareas pendientes para hoy. "
+        
+    message_body += "\n¡Que tengas un excelente y productivo día!"
     
     # 3. Send via Twilio
     account_sid = os.getenv("TWILIO_ACCOUNT_SID")
@@ -109,6 +138,105 @@ def send_hourly_alerts():
     except Exception as e:
         print(f"Database error in hourly alerts: {e}")
 
+def send_evening_summary():
+    print("Executing Evening Summary Job...")
+    database_url = os.getenv("DATABASE_URL")
+    account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+    auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+    twilio_number = os.getenv("TWILIO_WHATSAPP_NUMBER")
+    target_number = "whatsapp:+5218129354808"
+    
+    if not all([database_url, account_sid, auth_token, twilio_number]):
+        return
+        
+    client = Client(account_sid, auth_token)
+    try:
+        conn = psycopg2.connect(database_url, cursor_factory=psycopg2.extras.RealDictCursor)
+        cur = conn.cursor()
+        
+        phone = "5218129354808"
+        cur.execute("SELECT * FROM tasks WHERE phone_number = %s AND task_date = CURRENT_DATE", (phone,))
+        tasks = cur.fetchall()
+        
+        if tasks:
+            task_list = ["🌙 *Resumen del día* — ¿Cuáles cumpliste?\n"]
+            for t in tasks:
+                status = "✅" if t['completed'] else "⏳"
+                task_list.append(f"{status} #{t['id']} — {t['task']}")
+                
+            task_list.append("\nResponde: 'listo #1 #3' para marcar como cumplidas")
+            
+            message = client.messages.create(
+                from_=twilio_number,
+                body="\n".join(task_list),
+                to=target_number
+            )
+            print("Evening summary sent")
+            
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"Error in send_evening_summary: {e}")
+
+def cleanup_daily_tasks():
+    print("Executing Task Cleanup Job...")
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url: return
+    try:
+        conn = psycopg2.connect(database_url, cursor_factory=psycopg2.extras.RealDictCursor)
+        cur = conn.cursor()
+        
+        phone = "5218129354808"
+        cur.execute("SELECT COUNT(*) as total, COUNT(NULLIF(completed, false)) as completed FROM tasks WHERE phone_number = %s AND task_date = CURRENT_DATE", (phone,))
+        stats = cur.fetchone()
+        
+        if stats and stats['total'] > 0:
+            cur.execute("INSERT INTO task_stats (phone_number, stat_date, total_tasks, completed_tasks) VALUES (%s, CURRENT_DATE, %s, %s)",
+                       (phone, stats['total'], stats['completed']))
+            cur.execute("DELETE FROM tasks WHERE phone_number = %s AND task_date = CURRENT_DATE", (phone,))
+            conn.commit()
+            print("Daily tasks cleaned up and stats saved.")
+            
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"Error in cleanup_daily_tasks: {e}")
+
+def send_monthly_report():
+    print("Executing Monthly Report Job...")
+    database_url = os.getenv("DATABASE_URL")
+    account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+    auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+    twilio_number = os.getenv("TWILIO_WHATSAPP_NUMBER")
+    target_number = "whatsapp:+5218129354808"
+    
+    if not all([database_url, account_sid, auth_token, twilio_number]):
+        return
+        
+    client = Client(account_sid, auth_token)
+    try:
+        conn = psycopg2.connect(database_url, cursor_factory=psycopg2.extras.RealDictCursor)
+        cur = conn.cursor()
+        
+        phone = "5218129354808"
+        cur.execute("SELECT SUM(total_tasks) as total, SUM(completed_tasks) as completed FROM task_stats WHERE phone_number = %s AND stat_date >= date_trunc('month', CURRENT_DATE - INTERVAL '1 month') AND stat_date < date_trunc('month', CURRENT_DATE)", (phone,))
+        stats = cur.fetchone()
+        
+        if stats and stats['total'] and stats['total'] > 0:
+            percentage = round((stats['completed'] / stats['total']) * 100, 1)
+            body = f"📊 *Reporte Mensual de Productividad*\nEl mes pasado tuviste {stats['total']} tareas y completaste {stats['completed']} ({percentage}% de cumplimiento)."
+            client.messages.create(
+                from_=twilio_number,
+                body=body,
+                to=target_number
+            )
+            print("Monthly report sent.")
+            
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"Error in send_monthly_report: {e}")
+
 def start_scheduler():
     """
     Initializes and starts the APScheduler.
@@ -137,5 +265,36 @@ def start_scheduler():
         replace_existing=True
     )
     
+    # Schedule evening summary at 10:00 PM
+    scheduler.add_job(
+        func=send_evening_summary,
+        trigger="cron",
+        hour=22,
+        minute=0,
+        id="evening_summary_job",
+        replace_existing=True
+    )
+    
+    # Schedule cleanup at 11:59 PM
+    scheduler.add_job(
+        func=cleanup_daily_tasks,
+        trigger="cron",
+        hour=23,
+        minute=59,
+        id="cleanup_tasks_job",
+        replace_existing=True
+    )
+    
+    # Schedule monthly report (Day 1 of each month at 09:00 AM)
+    scheduler.add_job(
+        func=send_monthly_report,
+        trigger="cron",
+        day=1,
+        hour=9,
+        minute=0,
+        id="monthly_report_job",
+        replace_existing=True
+    )
+    
     scheduler.start()
-    print("Background scheduler started. Morning Briefing scheduled for 08:20 AM and Email Alerts scheduled every hour.")
+    print("Background scheduler started containing all alerts, briefings, and productivity jobs.")
