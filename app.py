@@ -359,6 +359,41 @@ def complete_task(phone_number, task_id, completed=True):
     except Exception as e:
         return f"Error: {str(e)}"
 
+def transcribe_audio(media_url):
+    try:
+        import requests
+        import tempfile
+        import os
+        from openai import OpenAI
+        
+        # Descargar el audio de Twilio
+        account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+        auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+        
+        response = requests.get(media_url, auth=(account_sid, auth_token))
+        
+        # Guardar en archivo temporal
+        with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
+            tmp.write(response.content)
+            tmp_path = tmp.name
+        
+        # Transcribir con Whisper
+        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        with open(tmp_path, "rb") as audio_file:
+            transcript = client.audio.transcriptions.create(
+                model="whisper-1",
+                file=audio_file,
+                language="es"
+            )
+        
+        os.unlink(tmp_path)
+        print(f"Audio transcrito: {transcript.text}")
+        return transcript.text
+        
+    except Exception as e:
+        print(f"Error transcribiendo audio: {e}")
+        return None
+
 @app.route("/webhook", methods=["POST"])
 def webhook():
     """
@@ -366,6 +401,15 @@ def webhook():
     """
     incoming_msg = request.values.get("Body", "").strip()
     sender_number = request.values.get("From", "")
+    
+    media_url = request.values.get("MediaUrl0", "")
+    media_type = request.values.get("MediaContentType0", "")
+    
+    # Si hay audio, transcribirlo
+    if media_url and "audio" in media_type:
+        incoming_msg = transcribe_audio(media_url)
+        if not incoming_msg:
+            incoming_msg = "No pude transcribir el audio."
     
     # Clean the sender number (Twilio usually sends it in the format: whatsapp:+1234567890)
     if sender_number.startswith("whatsapp:"):
