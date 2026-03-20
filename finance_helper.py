@@ -173,25 +173,21 @@ def get_portfolio_summary(phone_number):
         cur.close()
         conn.close()
         if not positions:
-            return "No tienes acciones en tu portafolio."
-        lines = ["📊 *Tu portafolio:*\n"]
-        total_value = 0
-        total_cost = 0
+            return "No tienes acciones registradas."
+        
+        lines = ["📊 *Portafolio hoy:*\n"]
+        total_day_gain = 0
+        
         for pos in positions:
             stock = get_stock_price(pos['ticker'])
             if stock:
-                current_value = stock['price'] * float(pos['shares'])
-                cost_basis = float(pos['avg_price']) * float(pos['shares'])
-                gain_loss = current_value - cost_basis
-                gain_loss_pct = ((stock['price'] - float(pos['avg_price'])) / float(pos['avg_price'])) * 100
-                total_value += current_value
-                total_cost += cost_basis
-                emoji = "📈" if gain_loss >= 0 else "📉"
-                lines.append(f"{emoji} *{pos['ticker']}*\n   Precio: ${stock['price']} ({stock['change']:+.2f}%)\n   Acciones: {pos['shares']} | Costo avg: ${pos['avg_price']}\n   Valor: ${current_value:.2f} | G/P: ${gain_loss:+.2f} ({gain_loss_pct:+.2f}%)\n")
-        total_gain = total_value - total_cost
-        total_pct = ((total_value - total_cost) / total_cost * 100) if total_cost > 0 else 0
-        lines.append(f"\n💰 *Total:* ${total_value:.2f}")
-        lines.append(f"{'📈' if total_gain >= 0 else '📉'} *G/P total:* ${total_gain:+.2f} ({total_pct:+.2f}%)")
+                day_gain = stock['change'] / 100 * stock['price'] * float(pos['shares'])
+                total_day_gain += day_gain
+                emoji = "📈" if day_gain >= 0 else "📉"
+                lines.append(f"{emoji} {pos['ticker']}: {stock['change']:+.2f}% (${day_gain:+.2f} hoy)")
+        
+        total_emoji = "📈" if total_day_gain >= 0 else "📉"
+        lines.append(f"\n{total_emoji} *Total del día: ${total_day_gain:+.2f}*")
         return "\n".join(lines)
     except Exception as e:
         return f"Error: {str(e)}"
