@@ -71,9 +71,6 @@ If user says 'mis gastos', use get_expenses tool.
 If user says 'compré X acciones de TICKER a $PRECIO', use buy_stock.
 If user says 'vendí X acciones de TICKER a $PRECIO', use sell_stock.
 If user says 'mi portafolio' or 'mis acciones', use get_portfolio.
-If user says 'compré X acciones de TICKER a $PRECIO', use buy_stock.
-If user says 'vendí X acciones de TICKER a $PRECIO', use sell_stock.
-If user says 'mi portafolio' or 'mis acciones', use get_portfolio.
 Leo earns $2,500 MXN per week by default. This resets every Monday automatically.
 
 When the user sends an image, analyze it intelligently:
@@ -85,6 +82,8 @@ When the user sends an image, analyze it intelligently:
 Always respond in Spanish.
 
 When you see an image with multiple stocks/investments, you MUST call buy_stock tool for EACH stock you see. Do not skip any. Register all positions visible in the image in a single response using multiple tool calls.
+
+When the user asks for the weekly stock report, call get_portfolio tool and present the weekly performance directly in WhatsApp. Never ask for an email to send the report — always respond directly in the chat.
 """
 
 # Define the tools Claude can use
