@@ -339,87 +339,19 @@ def start_scheduler():
     """
     # Use Mexico City Timezone (GMT-6)
     mx_tz = pytz.timezone('America/Mexico_City')
-    
     scheduler = BackgroundScheduler(timezone=mx_tz)
     
-    # Schedule to run every day at 08:20 AM
-    if not scheduler.get_job("morning_briefing_job"):
-        scheduler.add_job(
-            func=send_morning_briefing,
-            trigger="cron",
-            hour=8,
-            minute=20,
-            id="morning_briefing_job",
-            replace_existing=True
-        )
-    
-    # Schedule hourly email alerts
-    if not scheduler.get_job("hourly_email_alerts"):
-        scheduler.add_job(
-            func=send_hourly_alerts,
-            trigger="interval",
-            hours=1,
-            id="hourly_email_alerts",
-            replace_existing=True
-        )
-    
-    # Schedule evening summary at 10:00 PM
-    if not scheduler.get_job("evening_summary_job"):
-        scheduler.add_job(
-            func=send_evening_summary,
-            trigger="cron",
-            hour=22,
-            minute=0,
-            id="evening_summary_job",
-            replace_existing=True
-        )
-    
-    # Schedule cleanup at 11:59 PM
-    if not scheduler.get_job("cleanup_tasks_job"):
-        scheduler.add_job(
-            func=cleanup_daily_tasks,
-            trigger="cron",
-            hour=23,
-            minute=59,
-            id="cleanup_tasks_job",
-            replace_existing=True
-        )
-    
-    # Schedule monthly report (Day 1 of each month at 09:00 AM)
-    if not scheduler.get_job("monthly_report_job"):
-        scheduler.add_job(
-            func=send_monthly_report,
-            trigger="cron",
-            day=1,
-            hour=9,
-            minute=0,
-            id="monthly_report_job",
-            replace_existing=True
-        )
-    
-    # Schedule weekly salary reset every Monday at 00:00
-    if not scheduler.get_job("weekly_salary_reset_job"):
-        scheduler.add_job(
-            func=reset_weekly_salary,
-            trigger="cron",
-            day_of_week="mon",
-            hour=0,
-            minute=0,
-            id="weekly_salary_reset_job",
-            replace_existing=True
-        )
-    
-    # Schedule weekly portfolio report every Sunday at 8:00 PM
-    if not scheduler.get_job("weekly_portfolio_report_job"):
-        scheduler.add_job(
-            func=send_portfolio_weekly_report,
-            trigger="cron",
-            day_of_week="sun",
-            hour=20,
-            minute=0,
-            id="weekly_portfolio_report_job",
-            replace_existing=True
-        )
+    # Solo agregar jobs si el scheduler no está corriendo
+    if scheduler.running:
+        return
+        
+    scheduler.add_job(send_morning_briefing, 'cron', hour=8, minute=20, id='morning_briefing', replace_existing=True)
+    scheduler.add_job(send_hourly_alerts, 'cron', minute=0, id='hourly_alerts', replace_existing=True)
+    scheduler.add_job(send_evening_summary, 'cron', hour=22, minute=0, id='evening_summary', replace_existing=True)
+    scheduler.add_job(cleanup_daily_tasks, 'cron', hour=23, minute=59, id='task_cleanup', replace_existing=True)
+    scheduler.add_job(send_portfolio_weekly_report, 'cron', day_of_week='sun', hour=20, id='weekly_finance', replace_existing=True)
+    scheduler.add_job(send_monthly_report, 'cron', day=1, hour=9, id='monthly_report', replace_existing=True)
+    scheduler.add_job(reset_weekly_salary, 'cron', day_of_week='mon', hour=0, id='weekly_salary', replace_existing=True)
     
     scheduler.start()
     print("Background scheduler started containing all alerts, briefings, and productivity jobs.")

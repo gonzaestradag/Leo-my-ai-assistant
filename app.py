@@ -464,6 +464,12 @@ def transcribe_audio(media_url):
         print(f"Error transcribiendo audio: {e}")
         return None
 
+def get_text_from_response(response):
+    for block in response.content:
+        if hasattr(block, 'text'):
+            return block.text
+    return "Lo siento, no pude procesar esa solicitud."
+
 @app.route("/webhook", methods=["POST"])
 def webhook():
     """
@@ -539,7 +545,7 @@ def webhook():
         if response.stop_reason == "tool_use":
             bot_reply = process_tool_use(response, history, sender_number)
         else:
-            bot_reply = response.content[0].text
+            bot_reply = get_text_from_response(response)
             
     except Exception as e:
         print(f"Error generating response from Claude: {e}")
@@ -591,7 +597,7 @@ def process_tool_use(response, history, sender_number):
         # Si Claude quiere usar más herramientas, procesarlas recursivamente
         if final_response.stop_reason == "tool_use":
             return process_tool_use(final_response, history, sender_number)
-        return final_response.content[0].text
+        return get_text_from_response(final_response)
     except Exception as e:
         print(f"Error getting final response: {e}")
         results_text = "\n".join([r['content'] for r in tool_results])
