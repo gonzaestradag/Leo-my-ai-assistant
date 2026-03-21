@@ -79,6 +79,169 @@ def get_expenses_summary(phone_number, period="day"):
     except Exception as e:
         return f"Error: {str(e)}"
 
+def add_debt(phone_number, person, amount, debt_type, description=""):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO debts (phone_number, person, amount, debt_type, description) VALUES (%s, %s, %s, %s, %s) RETURNING id",
+            (phone_number, person, amount, debt_type, description)
+        )
+        debt_id = cur.fetchone()['id']
+        conn.commit()
+        cur.close()
+        conn.close()
+        if debt_type == 'owe':
+            return f"✅ Registrado: Le debes ${amount} a {person} (ID #{debt_id})"
+        else:
+            return f"✅ Registrado: {person} te debe ${amount} (ID #{debt_id})"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+def get_debts(phone_number):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT * FROM debts WHERE phone_number = %s AND paid = FALSE ORDER BY created_at DESC",
+            (phone_number,)
+        )
+        debts = cur.fetchall()
+        cur.close()
+        conn.close()
+        if not debts:
+            return "No tienes deudas pendientes. ¡Estás al corriente! ✅"
+        owe = [d for d in debts if d['debt_type'] == 'owe']
+        owed = [d for d in debts if d['debt_type'] == 'owed']
+        lines = ["💸 *Deudas pendientes:*\n"]
+        if owe:
+            lines.append("🔴 *Tú debes:*")
+            for d in owe:
+                lines.append(f"  #{d['id']} — {d['person']}: ${d['amount']} ({d['description'] or 'sin descripción'})")
+        if owed:
+            lines.append("\n🟢 *Te deben:*")
+            for d in owed:
+                lines.append(f"  #{d['id']} — {d['person']}: ${d['amount']} ({d['description'] or 'sin descripción'})")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+def pay_debt(phone_number, debt_id):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE debts SET paid = TRUE WHERE id = %s AND phone_number = %s RETURNING person, amount",
+            (debt_id, phone_number)
+        )
+        debt = cur.fetchone()
+        conn.commit()
+        cur.close()
+        conn.close()
+        if debt:
+            return f"✅ Deuda #{debt_id} con {debt['person']} por ${debt['amount']} marcada como pagada."
+        return "No encontré esa deuda."
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+def add_reminder(phone_number, title, reminder_date, description=""):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO reminders (phone_number, title, reminder_date, description) VALUES (%s, %s, %s, %s) RETURNING id",
+            (phone_number, title, reminder_date, description)
+        )
+        reminder_id = cur.fetchone()['id']
+        conn.commit()
+        cur.close()
+        conn.close()
+        return f"✅ Recordatorio #{reminder_id} agregado: '{title}' para el {reminder_date}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+def get_reminders(phone_number):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT * FROM reminders WHERE phone_number = %s AND sent = FALSE AND reminder_date >= CURRENT_DATE ORDER BY reminder_date ASC LIMIT 10",
+            (phone_number,)
+        )
+        reminders = cur.fetchall()
+        cur.close()
+        conn.close()
+        if not reminders:
+            return "No tienes recordatorios próximos."
+        lines = ["🔔 *Próximos recordatorios:*\n"]
+        for r in reminders:
+            lines.append(f"📅 #{r['id']} — {r['reminder_date']} | {r['title']}")
+            if r['description']:
+                lines.append(f"   {r['description']}")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+def add_goal(phone_number, title, description="", target_date=None):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO goals (phone_number, title, description, target_date) VALUES (%s, %s, %s, %s) RETURNING id",
+            (phone_number, title, description, target_date)
+        )
+        goal_id = cur.fetchone()['id']
+        conn.commit()
+        cur.close()
+        conn.close()
+        return f"✅ Meta #{goal_id} agregada: '{title}'"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+def get_goals(phone_number):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT * FROM goals WHERE phone_number = %s AND completed = FALSE ORDER BY created_at DESC",
+            (phone_number,)
+        )
+        goals = cur.fetchall()
+        cur.close()
+        conn.close()
+        if not goals:
+            return "No tienes metas activas. ¡Agrega una!"
+        lines = ["🎯 *Tus metas activas:*\n"]
+        for g in goals:
+            bar = "█" * (g['progress'] // 10) + "░" * (10 - g['progress'] // 10)
+            lines.append(f"#{g['id']} — {g['title']}")
+            lines.append(f"   [{bar}] {g['progress']}%")
+            if g['target_date']:
+                lines.append(f"   📅 Fecha límite: {g['target_date']}")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+def update_goal_progress(phone_number, goal_id, progress):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        completed = progress >= 100
+        cur.execute(
+            "UPDATE goals SET progress = %s, completed = %s WHERE id = %s AND phone_number = %s RETURNING title",
+            (progress, completed, goal_id, phone_number)
+        )
+        goal = cur.fetchone()
+        conn.commit()
+        cur.close()
+        conn.close()
+        if goal:
+            if completed:
+                return f"🎉 ¡Meta '{goal['title']}' completada al 100%!"
+            return f"✅ Meta '{goal['title']}' actualizada al {progress}%"
+        return "No encontré esa meta."
+    except Exception as e:
+        return f"Error: {str(e)}"
 
 import datetime
 
@@ -113,6 +276,16 @@ If user says 'no cumplí #[id]', use complete_task with completed=False.
 
 If user says 'gasté $X en CATEGORIA', use add_expense tool.
 If user says 'mis gastos de hoy' or 'mis gastos de la semana', use get_expenses tool.
+
+If user says 'le debo $X a [persona]', use add_debt with debt_type='owe'.
+If user says '[persona] me debe $X', use add_debt with debt_type='owed'.
+If user says 'mis deudas', use get_debts.
+If user says 'ya pagué la deuda #X', use pay_debt.
+If user says 'recuérdame [cosa] el [fecha]', use add_reminder.
+If user says 'mis recordatorios', use get_reminders.
+If user says 'agrega meta: [meta]', use add_goal.
+If user says 'mis metas', use get_goals.
+If user says 'actualiza meta #X al Y%', use update_goal_progress.
 
 When the user sends an image, analyze it intelligently:
 
@@ -280,6 +453,84 @@ JARVIS_TOOLS = [
             "properties": {
                 "period": {"type": "string", "description": "day o week"}
             }
+        }
+    },
+    {
+        "name": "add_debt",
+        "description": "Registra una deuda. Puede ser 'owe' (yo le debo a alguien) o 'owed' (alguien me debe a mí).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "person": {"type": "string", "description": "Nombre de la persona"},
+                "amount": {"type": "number", "description": "Monto de la deuda"},
+                "description": {"type": "string", "description": "Descripción de la deuda"},
+                "debt_type": {"type": "string", "description": "'owe' si yo le debo, 'owed' si me deben a mí"}
+            },
+            "required": ["person", "amount", "debt_type"]
+        }
+    },
+    {
+        "name": "get_debts",
+        "description": "Muestra todas las deudas pendientes.",
+        "input_schema": {"type": "object", "properties": {}}
+    },
+    {
+        "name": "pay_debt",
+        "description": "Marca una deuda como pagada.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "debt_id": {"type": "integer", "description": "ID de la deuda"}
+            },
+            "required": ["debt_id"]
+        }
+    },
+    {
+        "name": "add_reminder",
+        "description": "Agrega un recordatorio para una fecha específica.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Título del recordatorio"},
+                "reminder_date": {"type": "string", "description": "Fecha del recordatorio en formato YYYY-MM-DD"},
+                "description": {"type": "string", "description": "Descripción adicional (opcional)"}
+            },
+            "required": ["title", "reminder_date"]
+        }
+    },
+    {
+        "name": "get_reminders",
+        "description": "Muestra los recordatorios próximos.",
+        "input_schema": {"type": "object", "properties": {}}
+    },
+    {
+        "name": "add_goal",
+        "description": "Agrega una meta personal con fecha límite.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Título de la meta"},
+                "description": {"type": "string", "description": "Descripción de la meta"},
+                "target_date": {"type": "string", "description": "Fecha límite en formato YYYY-MM-DD"}
+            },
+            "required": ["title"]
+        }
+    },
+    {
+        "name": "get_goals",
+        "description": "Muestra las metas personales activas.",
+        "input_schema": {"type": "object", "properties": {}}
+    },
+    {
+        "name": "update_goal_progress",
+        "description": "Actualiza el progreso de una meta del 0 al 100%.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "goal_id": {"type": "integer", "description": "ID de la meta"},
+                "progress": {"type": "integer", "description": "Progreso del 0 al 100"}
+            },
+            "required": ["goal_id", "progress"]
         }
     }
 ]
@@ -658,6 +909,22 @@ def execute_tool(tool_name, tool_input, sender_number):
         return add_expense(phone_number=sender_number, amount=tool_input.get("amount"), category=tool_input.get("category"), description=tool_input.get("description", ""))
     elif tool_name == "get_expenses":
         return get_expenses_summary(phone_number=sender_number, period=tool_input.get("period", "day"))
+    elif tool_name == "add_debt":
+        return add_debt(phone_number=sender_number, person=tool_input.get("person"), amount=tool_input.get("amount"), debt_type=tool_input.get("debt_type"), description=tool_input.get("description", ""))
+    elif tool_name == "get_debts":
+        return get_debts(phone_number=sender_number)
+    elif tool_name == "pay_debt":
+        return pay_debt(phone_number=sender_number, debt_id=tool_input.get("debt_id"))
+    elif tool_name == "add_reminder":
+        return add_reminder(phone_number=sender_number, title=tool_input.get("title"), reminder_date=tool_input.get("reminder_date"), description=tool_input.get("description", ""))
+    elif tool_name == "get_reminders":
+        return get_reminders(phone_number=sender_number)
+    elif tool_name == "add_goal":
+        return add_goal(phone_number=sender_number, title=tool_input.get("title"), description=tool_input.get("description", ""), target_date=tool_input.get("target_date"))
+    elif tool_name == "get_goals":
+        return get_goals(phone_number=sender_number)
+    elif tool_name == "update_goal_progress":
+        return update_goal_progress(phone_number=sender_number, goal_id=tool_input.get("goal_id"), progress=tool_input.get("progress"))
     else:
         return f"Herramienta {tool_name} no reconocida."
 

@@ -74,6 +74,38 @@ CREATE TABLE IF NOT EXISTS expenses (
     expense_date DATE DEFAULT CURRENT_DATE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS debts (
+    id SERIAL PRIMARY KEY,
+    phone_number VARCHAR(20),
+    person VARCHAR(100),
+    amount DECIMAL(10,2),
+    description TEXT,
+    debt_type VARCHAR(10),
+    paid BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS reminders (
+    id SERIAL PRIMARY KEY,
+    phone_number VARCHAR(20),
+    title VARCHAR(200),
+    reminder_date DATE,
+    description TEXT,
+    sent BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS goals (
+    id SERIAL PRIMARY KEY,
+    phone_number VARCHAR(20),
+    title VARCHAR(200),
+    description TEXT,
+    target_date DATE,
+    progress INTEGER DEFAULT 0,
+    completed BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 if database_url:

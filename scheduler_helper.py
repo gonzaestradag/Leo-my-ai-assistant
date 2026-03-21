@@ -304,6 +304,50 @@ def send_monthly_report():
     except Exception as e:
         print(f"Error in send_monthly_report: {e}")
 
+def check_daily_reminders():
+    print("Executing Daily Reminders Job...")
+    database_url = os.getenv("DATABASE_URL")
+    account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+    auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+    twilio_number = os.getenv("TWILIO_WHATSAPP_NUMBER")
+    target_number = "whatsapp:+5218129354808"
+    
+    if not all([database_url, account_sid, auth_token, twilio_number]):
+        return
+        
+    client = Client(account_sid, auth_token)
+    try:
+        conn = psycopg2.connect(database_url, cursor_factory=psycopg2.extras.RealDictCursor)
+        cur = conn.cursor()
+        
+        phone = "5218129354808"
+        cur.execute(
+            "SELECT * FROM reminders WHERE phone_number = %s AND sent = FALSE AND reminder_date = CURRENT_DATE",
+            (phone,)
+        )
+        reminders = cur.fetchall()
+        
+        if reminders:
+            lines = ["🔔 *Recordatorios de Hoy:*\n"]
+            for r in reminders:
+                lines.append(f"• {r['title']}")
+                if r['description']:
+                    lines.append(f"  {r['description']}")
+                # Mark as sent
+                cur.execute("UPDATE reminders SET sent = TRUE WHERE id = %s", (r['id'],))
+            
+            conn.commit()
+            client.messages.create(
+                from_=twilio_number,
+                body="\n".join(lines),
+                to=target_number
+            )
+            print(f"Sent {len(reminders)} daily reminders.")
+            
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"Error in check_daily_reminders: {e}")
 
 
 _scheduler = None
@@ -319,6 +363,7 @@ def start_scheduler():
     _scheduler.add_job(lambda: run_in_background(send_evening_summary), 'cron', hour=22, minute=0, id='evening_summary', replace_existing=True)
     _scheduler.add_job(lambda: run_in_background(cleanup_daily_tasks), 'cron', hour=23, minute=59, id='task_cleanup', replace_existing=True)
     _scheduler.add_job(lambda: run_in_background(send_monthly_report), 'cron', day=1, hour=9, id='monthly_report', replace_existing=True)
+    _scheduler.add_job(lambda: run_in_background(check_daily_reminders), 'cron', hour=9, minute=0, id='daily_reminders', replace_existing=True)
     
     _scheduler.start()
     print('Background scheduler started.')
