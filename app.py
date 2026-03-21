@@ -31,7 +31,54 @@ def get_db_connection():
 # Import calendar and gmail helper functions
 from calendar_helper import get_todays_events, create_event
 from gmail_helper import get_recent_unread_emails, get_urgent_emails, send_email
-from finance_helper import set_salary, get_balance, add_fixed_expense, add_position, remove_position, get_portfolio_summary, add_expense, get_expenses_summary
+
+
+def add_expense(phone_number, amount, category, description=""):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO expenses (phone_number, amount, category, description) VALUES (%s, %s, %s, %s)",
+            (phone_number, amount, category, description)
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+        return f"✅ Gasto registrado: ${amount} en {category}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+def get_expenses_summary(phone_number, period="day"):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        if period == "week":
+            cur.execute(
+                "SELECT category, SUM(amount) as total FROM expenses WHERE phone_number = %s AND expense_date >= date_trunc('week', CURRENT_DATE) GROUP BY category ORDER BY total DESC",
+                (phone_number,)
+            )
+            title = "esta semana"
+        else:
+            cur.execute(
+                "SELECT category, SUM(amount) as total FROM expenses WHERE phone_number = %s AND expense_date = CURRENT_DATE GROUP BY category ORDER BY total DESC",
+                (phone_number,)
+            )
+            title = "hoy"
+        expenses = cur.fetchall()
+        cur.close()
+        conn.close()
+        if not expenses:
+            return f"No has registrado gastos {title}."
+        lines = [f"💸 *Gastos de {title}:*\n"]
+        total = 0
+        for e in expenses:
+            lines.append(f"• {e['category']}: ${e['total']:.2f}")
+            total += float(e['total'])
+        lines.append(f"\n💰 *Total:* ${total:.2f}")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
 
 import datetime
 
@@ -63,27 +110,18 @@ If user says 'agrega tarea: [tarea]' or 'agregar pendiente: [tarea]', use add_ta
 If user says 'mis tareas' or 'pendientes de hoy', use get_tasks.
 If user says 'listo #[id]' or 'cumplí #[id]', use complete_task with completed=True.
 If user says 'no cumplí #[id]', use complete_task with completed=False.
-If user says 'esta semana recibí $X' or 'mi sueldo es $X', use set_salary tool.
-If user says 'cuánto me queda' or 'mi balance', use get_balance tool.
-If user says 'agrega gasto fijo: [nombre] $[monto] [frecuencia]', use add_fixed_expense tool.
-If user says 'gasté $X en [categoria]' or 'agrega gasto', use add_expense tool.
-If user says 'mis gastos', use get_expenses tool.
-If user says 'compré X acciones de TICKER a $PRECIO', use buy_stock.
-If user says 'vendí X acciones de TICKER a $PRECIO', use sell_stock.
-If user says 'mi portafolio' or 'mis acciones', use get_portfolio.
-Leo earns $2,500 MXN per week by default. This resets every Monday automatically.
+
+If user says 'gasté $X en CATEGORIA', use add_expense tool.
+If user says 'mis gastos de hoy' or 'mis gastos de la semana', use get_expenses tool.
 
 When the user sends an image, analyze it intelligently:
-- If it's an investment portfolio, extract tickers, shares and prices and use buy_stock tool to register them
-- If it's a receipt or expense, extract the amount and category and use add_expense tool
+
 - If it's a document, summarize its content
 - If it's food, estimate calories and nutritional info
 - If it's anything else, explain what you see in a helpful way
 Always respond in Spanish.
 
-When you see an image with multiple stocks/investments, you MUST call buy_stock tool for EACH stock you see. Do not skip any. Register all positions visible in the image in a single response using multiple tool calls.
 
-When the user asks for the weekly stock report, call get_portfolio tool and present the weekly performance directly in WhatsApp. Never ask for an email to send the report — always respond directly in the chat.
 """
 
 # Define the tools Claude can use
@@ -222,39 +260,28 @@ JARVIS_TOOLS = [
         }
     },
     {
-        "name": "set_salary",
-        "description": "Registra el sueldo semanal del usuario.",
+        "name": "add_expense",
+        "description": "Registra un gasto del usuario.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "amount": {"type": "number", "description": "Monto del sueldo semanal"}
+                "amount": {"type": "number", "description": "Monto del gasto"},
+                "category": {"type": "string", "description": "Categoría (comida, transporte, entretenimiento, ropa, etc.)"},
+                "description": {"type": "string", "description": "Descripción del gasto (opcional)"}
             },
-            "required": ["amount"]
+            "required": ["amount", "category"]
         }
     },
     {
-        "name": "get_balance",
-        "description": "Muestra el balance semanal: sueldo, gastos y disponible.",
-        "input_schema": {"type": "object", "properties": {}}
-    },
-    {
-        "name": "add_fixed_expense",
-        "description": "Agrega un gasto fijo recurrente.",
+        "name": "get_expenses",
+        "description": "Muestra resumen de gastos del día o de la semana.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "name": {"type": "string", "description": "Nombre del gasto fijo"},
-                "amount": {"type": "number", "description": "Monto"},
-                "frequency": {"type": "string", "description": "Frecuencia: semanal, quincenal, mensual"}
-            },
-            "required": ["name", "amount", "frequency"]
+                "period": {"type": "string", "description": "day o week"}
+            }
         }
-    },
-    {"name": "buy_stock", "description": "Registra compra de acciones.", "input_schema": {"type": "object", "properties": {"ticker": {"type": "string"}, "shares": {"type": "number"}, "price": {"type": "number"}}, "required": ["ticker", "shares", "price"]}},
-    {"name": "sell_stock", "description": "Registra venta de acciones.", "input_schema": {"type": "object", "properties": {"ticker": {"type": "string"}, "shares": {"type": "number"}, "price": {"type": "number"}}, "required": ["ticker", "shares", "price"]}},
-    {"name": "get_portfolio", "description": "Muestra portafolio con precios actuales y ganancias/pérdidas.", "input_schema": {"type": "object", "properties": {}}},
-    {"name": "add_expense", "description": "Registra un gasto.", "input_schema": {"type": "object", "properties": {"amount": {"type": "number"}, "category": {"type": "string"}, "description": {"type": "string"}}, "required": ["amount", "category"]}},
-    {"name": "get_expenses", "description": "Muestra gastos del día.", "input_schema": {"type": "object", "properties": {}}}
+    }
 ]
 
 def get_conversation_history(phone_number, limit=3):
@@ -627,22 +654,10 @@ def execute_tool(tool_name, tool_input, sender_number):
         return get_tasks(phone_number=sender_number)
     elif tool_name == "complete_task":
         return complete_task(phone_number=sender_number, task_id=tool_input.get("task_id"), completed=tool_input.get("completed", True))
-    elif tool_name == "buy_stock":
-        return add_position(phone_number=sender_number, ticker=tool_input.get("ticker"), shares=tool_input.get("shares"), price=tool_input.get("price"))
-    elif tool_name == "sell_stock":
-        return remove_position(phone_number=sender_number, ticker=tool_input.get("ticker"), shares=tool_input.get("shares"), price=tool_input.get("price"))
-    elif tool_name == "get_portfolio":
-        return get_portfolio_summary(phone_number=sender_number)
     elif tool_name == "add_expense":
         return add_expense(phone_number=sender_number, amount=tool_input.get("amount"), category=tool_input.get("category"), description=tool_input.get("description", ""))
     elif tool_name == "get_expenses":
-        return get_expenses_summary(phone_number=sender_number)
-    elif tool_name == "set_salary":
-        return set_salary(phone_number=sender_number, amount=tool_input.get("amount"))
-    elif tool_name == "get_balance":
-        return get_balance(phone_number=sender_number)
-    elif tool_name == "add_fixed_expense":
-        return add_fixed_expense(phone_number=sender_number, name=tool_input.get("name"), amount=tool_input.get("amount"), frequency=tool_input.get("frequency"))
+        return get_expenses_summary(phone_number=sender_number, period=tool_input.get("period", "day"))
     else:
         return f"Herramienta {tool_name} no reconocida."
 

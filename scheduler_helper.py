@@ -304,51 +304,7 @@ def send_monthly_report():
     except Exception as e:
         print(f"Error in send_monthly_report: {e}")
 
-def reset_weekly_salary():
-    print("Executing Weekly Salary Reset Job...")
-    database_url = os.getenv("DATABASE_URL")
-    if not database_url: return
-    try:
-        conn = psycopg2.connect(database_url, cursor_factory=psycopg2.extras.RealDictCursor)
-        cur = conn.cursor()
-        
-        phone = "5218129354808"
-        amount = 2500.00
-        # Insert this week's salary
-        cur.execute("INSERT INTO salary (phone_number, amount) VALUES (%s, %s)", (phone, amount))
-        conn.commit()
-        print(f"Weekly salary of {amount} registered for {phone}.")
-            
-        cur.close()
-        conn.close()
-    except Exception as e:
-        print(f"Error in reset_weekly_salary: {e}")
 
-def send_portfolio_weekly_report():
-    print("Executing Weekly Portfolio Report Job...")
-    database_url = os.getenv("DATABASE_URL")
-    account_sid = os.getenv("TWILIO_ACCOUNT_SID")
-    auth_token = os.getenv("TWILIO_AUTH_TOKEN")
-    twilio_number = os.getenv("TWILIO_WHATSAPP_NUMBER")
-    target_number = "whatsapp:+5218129354808"
-    
-    if not all([database_url, account_sid, auth_token, twilio_number]):
-        return
-        
-    client = Client(account_sid, auth_token)
-    try:
-        from finance_helper import get_weekly_report
-        phone = "5218129354808"
-        report_text = get_weekly_report(phone)
-        if report_text and "No tienes acciones" not in report_text:
-            client.messages.create(
-                from_=twilio_number,
-                body=report_text,
-                to=target_number
-            )
-            print("Weekly portfolio report sent.")
-    except Exception as e:
-        print(f"Error in send_portfolio_weekly_report: {e}")
 
 _scheduler = None
 
@@ -362,9 +318,7 @@ def start_scheduler():
     _scheduler.add_job(lambda: run_in_background(send_hourly_alerts), 'cron', minute=0, id='hourly_alerts', replace_existing=True)
     _scheduler.add_job(lambda: run_in_background(send_evening_summary), 'cron', hour=22, minute=0, id='evening_summary', replace_existing=True)
     _scheduler.add_job(lambda: run_in_background(cleanup_daily_tasks), 'cron', hour=23, minute=59, id='task_cleanup', replace_existing=True)
-    _scheduler.add_job(lambda: run_in_background(send_portfolio_weekly_report), 'cron', day_of_week='sun', hour=20, id='weekly_finance', replace_existing=True)
     _scheduler.add_job(lambda: run_in_background(send_monthly_report), 'cron', day=1, hour=9, id='monthly_report', replace_existing=True)
-    _scheduler.add_job(lambda: run_in_background(reset_weekly_salary), 'cron', day_of_week='mon', hour=0, id='weekly_salary', replace_existing=True)
     
     _scheduler.start()
     print('Background scheduler started.')
