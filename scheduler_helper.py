@@ -333,25 +333,22 @@ def send_portfolio_weekly_report():
     except Exception as e:
         print(f"Error in send_portfolio_weekly_report: {e}")
 
+_scheduler = None
+
 def start_scheduler():
-    """
-    Initializes and starts the APScheduler.
-    """
-    # Use Mexico City Timezone (GMT-6)
-    mx_tz = pytz.timezone('America/Mexico_City')
-    scheduler = BackgroundScheduler(timezone=mx_tz)
+    global _scheduler
+    if _scheduler is not None and _scheduler.running:
+        return _scheduler
     
-    # Solo agregar jobs si el scheduler no está corriendo
-    if scheduler.running:
-        return
-        
-    scheduler.add_job(send_morning_briefing, 'cron', hour=8, minute=20, id='morning_briefing', replace_existing=True)
-    scheduler.add_job(send_hourly_alerts, 'cron', minute=0, id='hourly_alerts', replace_existing=True)
-    scheduler.add_job(send_evening_summary, 'cron', hour=22, minute=0, id='evening_summary', replace_existing=True)
-    scheduler.add_job(cleanup_daily_tasks, 'cron', hour=23, minute=59, id='task_cleanup', replace_existing=True)
-    scheduler.add_job(send_portfolio_weekly_report, 'cron', day_of_week='sun', hour=20, id='weekly_finance', replace_existing=True)
-    scheduler.add_job(send_monthly_report, 'cron', day=1, hour=9, id='monthly_report', replace_existing=True)
-    scheduler.add_job(reset_weekly_salary, 'cron', day_of_week='mon', hour=0, id='weekly_salary', replace_existing=True)
+    _scheduler = BackgroundScheduler(timezone='America/Mexico_City')
+    _scheduler.add_job(send_morning_briefing, 'cron', hour=8, minute=20, id='morning_briefing', replace_existing=True)
+    _scheduler.add_job(send_hourly_alerts, 'cron', minute=0, id='hourly_alerts', replace_existing=True)
+    _scheduler.add_job(send_evening_summary, 'cron', hour=22, minute=0, id='evening_summary', replace_existing=True)
+    _scheduler.add_job(cleanup_daily_tasks, 'cron', hour=23, minute=59, id='task_cleanup', replace_existing=True)
+    _scheduler.add_job(send_portfolio_weekly_report, 'cron', day_of_week='sun', hour=20, id='weekly_finance', replace_existing=True)
+    _scheduler.add_job(send_monthly_report, 'cron', day=1, hour=9, id='monthly_report', replace_existing=True)
+    _scheduler.add_job(reset_weekly_salary, 'cron', day_of_week='mon', hour=0, id='weekly_salary', replace_existing=True)
     
-    scheduler.start()
-    print("Background scheduler started containing all alerts, briefings, and productivity jobs.")
+    _scheduler.start()
+    print('Background scheduler started.')
+    return _scheduler
