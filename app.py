@@ -257,7 +257,7 @@ JARVIS_TOOLS = [
     {"name": "get_expenses", "description": "Muestra gastos del día.", "input_schema": {"type": "object", "properties": {}}}
 ]
 
-def get_conversation_history(phone_number, limit=5):
+def get_conversation_history(phone_number, limit=3):
     """
     Fetches the context of the conversation from Supabase.
     We fetch the last `limit` rows (which equals 10 messages: 5 user + 5 bot responses).
@@ -592,7 +592,8 @@ def process_tool_use(response, history, sender_number):
             max_tokens=1000,
             system=get_system_prompt(),
             messages=history,
-            tools=JARVIS_TOOLS
+            tools=JARVIS_TOOLS,
+            timeout=25.0
         )
         # Si Claude quiere usar más herramientas, procesarlas recursivamente
         if final_response.stop_reason == "tool_use":

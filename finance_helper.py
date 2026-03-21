@@ -96,7 +96,7 @@ def get_stock_price(ticker):
         import requests
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=5d"
         headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(url, headers=headers, timeout=5)
+        response = requests.get(url, headers=headers, timeout=3)
         data = response.json()
         prices = data['chart']['result'][0]['indicators']['quote'][0]['close']
         prices = [p for p in prices if p is not None]
@@ -113,7 +113,7 @@ def get_week_performance(ticker):
         import requests
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=7d"
         headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(url, headers=headers, timeout=5)
+        response = requests.get(url, headers=headers, timeout=3)
         data = response.json()
         prices = data['chart']['result'][0]['indicators']['quote'][0]['close']
         prices = [p for p in prices if p is not None]

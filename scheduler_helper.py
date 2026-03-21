@@ -5,6 +5,14 @@ import psycopg2.extras
 from twilio.rest import Client
 from calendar_helper import get_todays_events
 import psycopg2
+from concurrent.futures import ThreadPoolExecutor
+import threading
+import signal
+
+executor = ThreadPoolExecutor(max_workers=2)
+
+def run_in_background(func):
+    executor.submit(func)
 
 def get_weather():
     try:
@@ -130,30 +138,36 @@ def send_hourly_alerts():
     Checks for new important emails every hour and sends a WhatsApp alert if any are found.
     Ensures no duplicate alerts using the email_alerts DB table.
     """
-    print("Executing Hourly Email Alerts Job...")
-    from gmail_helper import check_important_emails
-    
-    important_emails = check_important_emails()
-    if not important_emails:
-        return
-        
-    database_url = os.getenv("DATABASE_URL")
-    if not database_url:
-        print("Error: DATABASE_URL not configured for hourly alerts.")
-        return
-        
-    account_sid = os.getenv("TWILIO_ACCOUNT_SID")
-    auth_token = os.getenv("TWILIO_AUTH_TOKEN")
-    twilio_number = os.getenv("TWILIO_WHATSAPP_NUMBER")
-    target_number = "whatsapp:+5218129354808"
-    
-    if not all([account_sid, auth_token, twilio_number]):
-        print("Error: Twilio credentials not fully configured.")
-        return
-        
-    client = Client(account_sid, auth_token)
-    
     try:
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(20)  # 20 segundos máximo
+
+        print("Executing Hourly Email Alerts Job...")
+        from gmail_helper import check_important_emails
+        
+        important_emails = check_important_emails()
+        if not important_emails:
+            signal.alarm(0)
+            return
+            
+        database_url = os.getenv("DATABASE_URL")
+        if not database_url:
+            print("Error: DATABASE_URL not configured for hourly alerts.")
+            signal.alarm(0)
+            return
+            
+        account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+        auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+        twilio_number = os.getenv("TWILIO_WHATSAPP_NUMBER")
+        target_number = "whatsapp:+5218129354808"
+        
+        if not all([account_sid, auth_token, twilio_number]):
+            print("Error: Twilio credentials not fully configured.")
+            signal.alarm(0)
+            return
+            
+        client = Client(account_sid, auth_token)
+        
         conn = psycopg2.connect(database_url)
         cur = conn.cursor()
         
@@ -185,6 +199,9 @@ def send_hourly_alerts():
                 
         cur.close()
         conn.close()
+        signal.alarm(0)  # cancelar alarm si termina bien
+    except TimeoutError:
+        print("Hourly alerts skipped due to timeout")
     except Exception as e:
         print(f"Database error in hourly alerts: {e}")
 
@@ -341,13 +358,13 @@ def start_scheduler():
         return _scheduler
     
     _scheduler = BackgroundScheduler(timezone='America/Mexico_City')
-    _scheduler.add_job(send_morning_briefing, 'cron', hour=8, minute=20, id='morning_briefing', replace_existing=True)
-    _scheduler.add_job(send_hourly_alerts, 'cron', minute=0, id='hourly_alerts', replace_existing=True)
-    _scheduler.add_job(send_evening_summary, 'cron', hour=22, minute=0, id='evening_summary', replace_existing=True)
-    _scheduler.add_job(cleanup_daily_tasks, 'cron', hour=23, minute=59, id='task_cleanup', replace_existing=True)
-    _scheduler.add_job(send_portfolio_weekly_report, 'cron', day_of_week='sun', hour=20, id='weekly_finance', replace_existing=True)
-    _scheduler.add_job(send_monthly_report, 'cron', day=1, hour=9, id='monthly_report', replace_existing=True)
-    _scheduler.add_job(reset_weekly_salary, 'cron', day_of_week='mon', hour=0, id='weekly_salary', replace_existing=True)
+    _scheduler.add_job(lambda: run_in_background(send_morning_briefing), 'cron', hour=8, minute=20, id='morning_briefing', replace_existing=True)
+    _scheduler.add_job(lambda: run_in_background(send_hourly_alerts), 'cron', minute=0, id='hourly_alerts', replace_existing=True)
+    _scheduler.add_job(lambda: run_in_background(send_evening_summary), 'cron', hour=22, minute=0, id='evening_summary', replace_existing=True)
+    _scheduler.add_job(lambda: run_in_background(cleanup_daily_tasks), 'cron', hour=23, minute=59, id='task_cleanup', replace_existing=True)
+    _scheduler.add_job(lambda: run_in_background(send_portfolio_weekly_report), 'cron', day_of_week='sun', hour=20, id='weekly_finance', replace_existing=True)
+    _scheduler.add_job(lambda: run_in_background(send_monthly_report), 'cron', day=1, hour=9, id='monthly_report', replace_existing=True)
+    _scheduler.add_job(lambda: run_in_background(reset_weekly_salary), 'cron', day_of_week='mon', hour=0, id='weekly_salary', replace_existing=True)
     
     _scheduler.start()
     print('Background scheduler started.')
