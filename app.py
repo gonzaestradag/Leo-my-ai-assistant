@@ -44,7 +44,7 @@ def add_expense(phone_number, amount, category, description=""):
         conn.commit()
         cur.close()
         conn.close()
-        return f"✅ Gasto registrado: ${amount} en {category}"
+        return f"✅ ¡Gasto registrado!\n\n💵 Monto: ${amount}\n🏷️ Categoría: {category}\n📝 Descripción: {description if description else 'N/A'}"
     except Exception as e:
         return f"Error: {str(e)}"
 
@@ -72,9 +72,9 @@ def get_expenses_summary(phone_number, period="day"):
         lines = [f"💸 *Gastos de {title}:*\n"]
         total = 0
         for e in expenses:
-            lines.append(f"• {e['category']}: ${e['total']:.2f}")
+            lines.append(f"🏷️ Categoría: {e['category']}\n💵 Monto: ${e['total']:.2f}\n")
             total += float(e['total'])
-        lines.append(f"\n💰 *Total:* ${total:.2f}")
+        lines.append(f"💰 *Total:* ${total:.2f}")
         return "\n".join(lines)
     except Exception as e:
         return f"Error: {str(e)}"
@@ -92,9 +92,9 @@ def add_debt(phone_number, person, amount, debt_type, description=""):
         cur.close()
         conn.close()
         if debt_type == 'owe':
-            return f"✅ Registrado: Le debes ${amount} a {person} (ID #{debt_id})"
+            return f"✅ ¡Deuda registrada!\n\n👤 Persona: {person}\n🔴 Tipo: Yo debo\n💵 Monto: ${amount}\n📝 Descripción: {description if description else 'N/A'}\n🆔 ID: #{debt_id}"
         else:
-            return f"✅ Registrado: {person} te debe ${amount} (ID #{debt_id})"
+            return f"✅ ¡Deuda registrada!\n\n👤 Persona: {person}\n🟢 Tipo: Me deben\n💵 Monto: ${amount}\n📝 Descripción: {description if description else 'N/A'}\n🆔 ID: #{debt_id}"
     except Exception as e:
         return f"Error: {str(e)}"
 
@@ -113,15 +113,15 @@ def get_debts(phone_number):
             return "No tienes deudas pendientes. ¡Estás al corriente! ✅"
         owe = [d for d in debts if d['debt_type'] == 'owe']
         owed = [d for d in debts if d['debt_type'] == 'owed']
-        lines = ["💸 *Deudas pendientes:*\n"]
+        lines = ["💸 *Deudas pendientes*\n"]
         if owe:
-            lines.append("🔴 *Tú debes:*")
+            lines.append("🔴 *Yo debo:*")
             for d in owe:
-                lines.append(f"  #{d['id']} — {d['person']}: ${d['amount']} ({d['description'] or 'sin descripción'})")
+                lines.append(f"\n👤 Persona: {d['person']}\n💵 Monto: ${d['amount']}\n📝 Descripción: {d['description'] or 'N/A'}\n🆔 ID: #{d['id']}")
         if owed:
-            lines.append("\n🟢 *Te deben:*")
+            lines.append("\n🟢 *Me deben:*")
             for d in owed:
-                lines.append(f"  #{d['id']} — {d['person']}: ${d['amount']} ({d['description'] or 'sin descripción'})")
+                lines.append(f"\n👤 Persona: {d['person']}\n💵 Monto: ${d['amount']}\n📝 Descripción: {d['description'] or 'N/A'}\n🆔 ID: #{d['id']}")
         return "\n".join(lines)
     except Exception as e:
         return f"Error: {str(e)}"
@@ -139,7 +139,7 @@ def pay_debt(phone_number, debt_id):
         cur.close()
         conn.close()
         if debt:
-            return f"✅ Deuda #{debt_id} con {debt['person']} por ${debt['amount']} marcada como pagada."
+            return f"✅ ¡Deuda pagada!\n\n👤 Persona: {debt['person']}\n💵 Monto: ${debt['amount']}\n🆔 ID: #{debt_id}"
         return "No encontré esa deuda."
     except Exception as e:
         return f"Error: {str(e)}"
@@ -156,7 +156,7 @@ def add_reminder(phone_number, title, reminder_date, description=""):
         conn.commit()
         cur.close()
         conn.close()
-        return f"✅ Recordatorio #{reminder_id} agregado: '{title}' para el {reminder_date}"
+        return f"✅ ¡Recordatorio guardado!\n\n📌 Título: {title}\n📅 Fecha: {reminder_date}\n📝 Descripción: {description if description else 'N/A'}\n🆔 ID: #{reminder_id}"
     except Exception as e:
         return f"Error: {str(e)}"
 
@@ -175,9 +175,7 @@ def get_reminders(phone_number):
             return "No tienes recordatorios próximos."
         lines = ["🔔 *Próximos recordatorios:*\n"]
         for r in reminders:
-            lines.append(f"📅 #{r['id']} — {r['reminder_date']} | {r['title']}")
-            if r['description']:
-                lines.append(f"   {r['description']}")
+            lines.append(f"📌 Título: {r['title']}\n📅 Fecha: {r['reminder_date']}\n📝 Descripción: {r['description'] or 'N/A'}\n🆔 ID: #{r['id']}\n")
         return "\n".join(lines)
     except Exception as e:
         return f"Error: {str(e)}"
@@ -194,7 +192,7 @@ def add_goal(phone_number, title, description="", target_date=None):
         conn.commit()
         cur.close()
         conn.close()
-        return f"✅ Meta #{goal_id} agregada: '{title}'"
+        return f"✅ ¡Meta registrada! 🏃\n\n🎯 Meta: {title}\n📝 Descripción: {description if description else 'N/A'}\n📅 Fecha límite: {target_date if target_date else 'Sin límite'}\n📊 Progreso: 0%\n🆔 ID: #{goal_id}"
     except Exception as e:
         return f"Error: {str(e)}"
 
@@ -214,10 +212,7 @@ def get_goals(phone_number):
         lines = ["🎯 *Tus metas activas:*\n"]
         for g in goals:
             bar = "█" * (g['progress'] // 10) + "░" * (10 - g['progress'] // 10)
-            lines.append(f"#{g['id']} — {g['title']}")
-            lines.append(f"   [{bar}] {g['progress']}%")
-            if g['target_date']:
-                lines.append(f"   📅 Fecha límite: {g['target_date']}")
+            lines.append(f"🎯 Meta: {g['title']}\n📅 Fecha límite: {g['target_date'] or 'N/A'}\n📊 Progreso: [{bar}] {g['progress']}%\n🆔 ID: #{g['id']}\n")
         return "\n".join(lines)
     except Exception as e:
         return f"Error: {str(e)}"
@@ -238,7 +233,7 @@ def update_goal_progress(phone_number, goal_id, progress):
         if goal:
             if completed:
                 return f"🎉 ¡Meta '{goal['title']}' completada al 100%!"
-            return f"✅ Meta '{goal['title']}' actualizada al {progress}%"
+            return f"✅ ¡Progreso actualizado!\n\n🎯 Meta: {goal['title']}\n📊 Nuevo Progreso: {progress}%\n🆔 ID: #{goal_id}"
         return "No encontré esa meta."
     except Exception as e:
         return f"Error: {str(e)}"
