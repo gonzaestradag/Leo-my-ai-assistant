@@ -110,6 +110,8 @@ def send_morning_briefing():
 📰 *Noticias de hoy:*
 {noticias}
 
+😴 ¿Cuántas horas dormiste anoche y cómo fue tu descanso? (Ej: *dormí 7 horas, bien*)
+
 ¡Que tengas un excelente día! 💪"""
     
     # 5. Send via Twilio
@@ -349,6 +351,24 @@ def check_daily_reminders():
     except Exception as e:
         print(f"Error in check_daily_reminders: {e}")
 
+def ask_sleep_checkin():
+    try:
+        from twilio.rest import Client
+        client = Client(os.getenv('TWILIO_ACCOUNT_SID'), os.getenv('TWILIO_AUTH_TOKEN'))
+        
+        target = os.getenv('USER_WHATSAPP_NUMBER', '+5218129354808')
+        sender = os.getenv('TWILIO_WHATSAPP_NUMBER', '')
+        if not sender.startswith('whatsapp:'):
+            sender = f"whatsapp:{sender}"
+            
+        message = client.messages.create(
+            body="🌅 Buenos días Leo!\n\n😴 ¿Cuántas horas dormiste anoche y cómo fue tu descanso?\n\nResponde algo como: *dormí 7 horas, bien*",
+            from_=sender,
+            to=f"whatsapp:{target}"
+        )
+        print(f"Sleep checkin sent: {message.sid}")
+    except Exception as e:
+        print(f"Error sending sleep checkin: {e}")
 
 _scheduler = None
 
@@ -358,6 +378,7 @@ def start_scheduler():
         return _scheduler
     
     _scheduler = BackgroundScheduler(timezone='America/Mexico_City')
+    _scheduler.add_job(lambda: run_in_background(ask_sleep_checkin), 'cron', hour=7, minute=0, id='sleep_checkin', replace_existing=True)
     _scheduler.add_job(lambda: run_in_background(send_morning_briefing), 'cron', hour=8, minute=20, id='morning_briefing', replace_existing=True)
     _scheduler.add_job(lambda: run_in_background(send_hourly_alerts), 'cron', minute=0, id='hourly_alerts', replace_existing=True)
     _scheduler.add_job(lambda: run_in_background(send_evening_summary), 'cron', hour=22, minute=0, id='evening_summary', replace_existing=True)
