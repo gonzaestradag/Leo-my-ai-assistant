@@ -470,6 +470,9 @@ If user says 'resumen de salud' or 'cómo voy hoy', use get_health_summary tool.
 If user says 'mis tareas' or 'tareas de blackboard', use get_bb_assignments tool.
 If user says 'mis calificaciones' or 'mis notas', use get_bb_grades tool.
 
+If user says 'tengo tarea de [materia] el [fecha]' or 'entrega de [materia] el [fecha]', use add_reminder tool with the title as 'Tarea: [materia]' and set the reminder_date to one day before the due date so Leo gets reminded in advance.
+If user says 'mis tareas escolares' or 'qué entregas tengo', use get_reminders tool and filter by titles that start with 'Tarea:'.
+
 When the user sends an image, analyze it intelligently:
 
 - If it's a document, summarize its content
