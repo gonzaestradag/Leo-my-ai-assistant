@@ -441,6 +441,10 @@ Si el usuario dice "envía un email a [email] con asunto [asunto] diciéndole qu
 If user says 'guarda contacto: [nombre], email: [email]', use save_contact tool.
 If user says 'manda email a [nombre]', use send_email_to_contact tool.
 If user asks about a contact, use get_contact tool.
+If user says 'manda WhatsApp a [contacto] diciéndole que: [mensaje]', use send_whatsapp_to_contact tool.
+If user says 'llama a [contacto] y dile que: [mensaje]', use call_contact tool.
+If user says 'agrega el teléfono de [contacto]: [número]', update the contact phone number.
+When saving a new contact, also ask for their phone number if not provided.
 If user says 'agrega tarea: [tarea]' or 'agregar pendiente: [tarea]', use add_task.
 If user says 'mis tareas' or 'pendientes de hoy', use get_tasks.
 If user says 'listo #[id]' or 'cumplí #[id]', use complete_task with completed=True.
@@ -555,15 +559,40 @@ JARVIS_TOOLS = [
     },
     {
         "name": "save_contact",
-        "description": "Guarda un contacto con nombre y email en la agenda de Jarvis.",
+        "description": "Guarda un contacto en la agenda de Jarvis.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "name": {"type": "string", "description": "Nombre o descripción del contacto (ej. 'maestra de matemáticas')"},
-                "email": {"type": "string", "description": "Email del contacto"},
+                "email": {"type": "string", "description": "Email del contacto (opcional)"},
+                "phone": {"type": "string", "description": "Teléfono del contacto (opcional)"},
                 "notes": {"type": "string", "description": "Notas adicionales (opcional)"}
             },
-            "required": ["name", "email"]
+            "required": ["name"]
+        }
+    },
+    {
+        "name": "send_whatsapp_to_contact",
+        "description": "Envía un mensaje de WhatsApp a un contacto guardado en la agenda.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "contact_name": {"type": "string", "description": "Nombre del contacto"},
+                "message": {"type": "string", "description": "Mensaje a enviar"}
+            },
+            "required": ["contact_name", "message"]
+        }
+    },
+    {
+        "name": "call_contact",
+        "description": "Hace una llamada telefónica a un contacto y reproduce un mensaje de voz.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "contact_name": {"type": "string", "description": "Nombre del contacto"},
+                "message": {"type": "string", "description": "Mensaje que se reproducirá en la llamada"}
+            },
+            "required": ["contact_name", "message"]
         }
     },
     {
@@ -845,20 +874,85 @@ def save_message(phone_number, user_message, bot_response):
     except Exception as e:
         print(f"Error saving message to Database: {e}")
 
-def save_contact(phone_number, name, email, notes=""):
+def save_contact(phone_number, name, email, notes="", phone=None):
     try:
         conn = get_db_connection()
         cur = conn.cursor()
         cur.execute(
-            "INSERT INTO contacts (phone_number, name, email, notes) VALUES (%s, %s, %s, %s)",
-            (phone_number, name.lower(), email, notes)
+            "INSERT INTO contacts (phone_number, name, email, notes, phone) VALUES (%s, %s, %s, %s, %s)",
+            (phone_number, name.lower(), email, notes, phone)
         )
         conn.commit()
         cur.close()
         conn.close()
-        return f"✅ Contacto guardado: {name} — {email}"
+        return f"✅ Contacto guardado: {name} — {email}{' — ' + phone if phone else ''}"
     except Exception as e:
-        return f"Error guardando contacto: {str(e)}"
+        return f"Error: {str(e)}"
+
+def send_whatsapp_to_contact(phone_number, contact_name, message):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT * FROM contacts WHERE phone_number = %s AND name ILIKE %s",
+            (phone_number, f"%{contact_name}%")
+        )
+        contact = cur.fetchone()
+        cur.close()
+        conn.close()
+        if not contact:
+            return f"No encontré '{contact_name}' en tu agenda. Agrégalo con: 'Jarvis, guarda contacto: [nombre], email: [email], teléfono: [número]'"
+        if not contact.get('phone'):
+            return f"El contacto {contact['name']} no tiene número de teléfono. Agrégalo con: 'Jarvis, agrega el teléfono de {contact['name']}: +521XXXXXXXXXX'"
+        from twilio.rest import Client
+        client = Client(os.getenv('TWILIO_ACCOUNT_SID'), os.getenv('TWILIO_AUTH_TOKEN'))
+        msg = client.messages.create(
+            body=message,
+            from_=f"whatsapp:{os.getenv('TWILIO_WHATSAPP_NUMBER')}",
+            to=f"whatsapp:{contact['phone'].replace('whatsapp:', '')}"
+        )
+        return f"✅ Mensaje enviado a {contact['name']} ({contact['phone']})\n\n💬 {message}"
+    except Exception as e:
+        return f"Error enviando mensaje: {str(e)}"
+
+def call_contact(phone_number, contact_name, message):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT * FROM contacts WHERE phone_number = %s AND name ILIKE %s",
+            (phone_number, f"%{contact_name}%")
+        )
+        contact = cur.fetchone()
+        cur.close()
+        conn.close()
+        if not contact:
+            return f"No encontré '{contact_name}' en tu agenda."
+        if not contact.get('phone'):
+            return f"El contacto {contact['name']} no tiene número de teléfono registrado."
+        from twilio.rest import Client
+        from twilio.twiml.voice_response import VoiceResponse
+        client = Client(os.getenv('TWILIO_ACCOUNT_SID'), os.getenv('TWILIO_AUTH_TOKEN'))
+        twiml = VoiceResponse()
+        twiml.say(message, voice='Polly.Mia', language='es-MX')
+        
+        # Determine from_ number
+        from_number = os.getenv('TWILIO_WHATSAPP_NUMBER')
+        if from_number and 'whatsapp:' in from_number:
+            from_number = from_number.replace('whatsapp:', '')
+        else:
+            from_number = os.getenv('TWILIO_PHONE_NUMBER', from_number)
+            
+        to_number = contact['phone'].replace('whatsapp:', '')
+            
+        call = client.calls.create(
+            twiml=str(twiml),
+            to=to_number,
+            from_=from_number
+        )
+        return f"📞 Llamada iniciada a {contact['name']} ({contact['phone']})\n\n🎙️ Mensaje: {message}"
+    except Exception as e:
+        return f"Error realizando llamada: {str(e)}"
 
 def get_contact(phone_number, name):
     try:
@@ -1162,7 +1256,11 @@ def execute_tool(tool_name, tool_input, sender_number):
     elif tool_name == "send_email":
         return send_email(to=tool_input.get("to"), subject=tool_input.get("subject"), body=tool_input.get("body"))
     elif tool_name == "save_contact":
-        return save_contact(phone_number=sender_number, name=tool_input.get("name"), email=tool_input.get("email"), notes=tool_input.get("notes", ""))
+        return save_contact(phone_number=sender_number, name=tool_input.get("name"), email=tool_input.get("email"), notes=tool_input.get("notes", ""), phone=tool_input.get("phone"))
+    elif tool_name == "send_whatsapp_to_contact":
+        return send_whatsapp_to_contact(phone_number=sender_number, contact_name=tool_input.get("contact_name"), message=tool_input.get("message"))
+    elif tool_name == "call_contact":
+        return call_contact(phone_number=sender_number, contact_name=tool_input.get("contact_name"), message=tool_input.get("message"))
     elif tool_name == "get_contact":
         return get_contact(phone_number=sender_number, name=tool_input.get("name"))
     elif tool_name == "send_email_to_contact":

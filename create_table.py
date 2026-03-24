@@ -6,6 +6,8 @@ load_dotenv()
 database_url = os.getenv("DATABASE_URL")
 
 table_query = """
+ALTER TABLE contacts ADD COLUMN IF NOT EXISTS phone VARCHAR(20);
+
 CREATE TABLE IF NOT EXISTS contacts (
     id SERIAL PRIMARY KEY,
     phone_number VARCHAR(20),
