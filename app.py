@@ -467,6 +467,9 @@ If user says 'qué comí hoy' or 'mis calorías', use get_calories_today tool.
 If user says 'agrega medicamento [nombre]', use add_medication tool.
 If user says 'resumen de salud' or 'cómo voy hoy', use get_health_summary tool.
 
+If user says 'mis tareas' or 'tareas de blackboard', use get_bb_assignments tool.
+If user says 'mis calificaciones' or 'mis notas', use get_bb_grades tool.
+
 When the user sends an image, analyze it intelligently:
 
 - If it's a document, summarize its content
@@ -774,6 +777,16 @@ JARVIS_TOOLS = [
     {
         "name": "get_health_summary",
         "description": "Muestra resumen de salud del día con recomendaciones para Hyrox.",
+        "input_schema": {"type": "object", "properties": {}}
+    },
+    {
+        "name": "get_bb_assignments",
+        "description": "Obtiene las tareas pendientes de Blackboard UDEM.",
+        "input_schema": {"type": "object", "properties": {}}
+    },
+    {
+        "name": "get_bb_grades",
+        "description": "Obtiene las calificaciones de Blackboard UDEM.",
         "input_schema": {"type": "object", "properties": {}}
     }
 ]
@@ -1189,6 +1202,12 @@ def execute_tool(tool_name, tool_input, sender_number):
         return add_medication(phone_number=sender_number, name=tool_input.get("name"), dosage=tool_input.get("dosage"), frequency=tool_input.get("frequency"), reminder_time=tool_input.get("reminder_time"))
     elif tool_name == "get_health_summary":
         return get_health_summary(phone_number=sender_number)
+    elif tool_name == "get_bb_assignments":
+        from blackboard_helper import get_bb_assignments
+        return get_bb_assignments()
+    elif tool_name == "get_bb_grades":
+        from blackboard_helper import get_bb_grades
+        return get_bb_grades()
     else:
         return f"Herramienta {tool_name} no reconocida."
 

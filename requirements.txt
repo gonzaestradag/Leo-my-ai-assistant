@@ -11,3 +11,5 @@ google-auth-oauthlib>=0.8.0
 APScheduler==3.10.4
 pytz
 openai
+beautifulsoup4
+lxml
