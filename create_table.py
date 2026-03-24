@@ -106,6 +106,39 @@ CREATE TABLE IF NOT EXISTS goals (
     completed BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS health_logs (
+    id SERIAL PRIMARY KEY,
+    phone_number VARCHAR(20),
+    log_type VARCHAR(20),
+    value TEXT,
+    notes TEXT,
+    log_date DATE DEFAULT CURRENT_DATE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS medications (
+    id SERIAL PRIMARY KEY,
+    phone_number VARCHAR(20),
+    name VARCHAR(100),
+    dosage VARCHAR(50),
+    frequency VARCHAR(50),
+    reminder_time VARCHAR(10),
+    active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS calorie_logs (
+    id SERIAL PRIMARY KEY,
+    phone_number VARCHAR(20),
+    meal_description TEXT,
+    calories INTEGER,
+    protein INTEGER,
+    carbs INTEGER,
+    fat INTEGER,
+    log_date DATE DEFAULT CURRENT_DATE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 if database_url:

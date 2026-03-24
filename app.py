@@ -239,11 +239,170 @@ def update_goal_progress(phone_number, goal_id, progress):
         conn.commit()
         cur.close()
         conn.close()
+        conn.close()
         if goal:
             if completed:
                 return f"🎉 ¡Meta '{goal['title']}' completada al 100%!"
             return f"✅ ¡Progreso actualizado!\n\n🎯 Meta: {goal['title']}\n📊 Nuevo Progreso: {progress}%\n🆔 ID: #{goal_id}"
         return "No encontré esa meta."
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+def log_mood(phone_number, mood, notes=""):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO health_logs (phone_number, log_type, value, notes) VALUES (%s, 'mood', %s, %s)",
+            (phone_number, mood, notes)
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+        mood_tips = {
+            'ansioso': '💡 Tip: 5 minutos de respiración profunda antes de entrenar mejora el rendimiento en Hyrox.',
+            'cansado': '💡 Tip: Si estás muy cansado, considera un entrenamiento de recuperación activa hoy.',
+            'motivado': '💡 Tip: ¡Perfecto para un entrenamiento intenso! Aprovecha la energía.',
+            'estresado': '💡 Tip: El ejercicio reduce el cortisol. Un run de 20 min te ayudará.',
+            'triste': '💡 Tip: El ejercicio libera endorfinas. Aunque sea una caminata corta ayuda.'
+        }
+        tip = mood_tips.get(mood.lower(), '💡 Tip: Mantén consistencia en tu entrenamiento para Hyrox.')
+        return f"✅ Estado de ánimo registrado: {mood}\n\n{tip}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+def log_calories(phone_number, meal_description, calories, protein=0, carbs=0, fat=0):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO calorie_logs (phone_number, meal_description, calories, protein, carbs, fat) VALUES (%s, %s, %s, %s, %s, %s)",
+            (phone_number, meal_description, calories, protein, carbs, fat)
+        )
+        # Total del día
+        cur.execute(
+            "SELECT SUM(calories) as total, SUM(protein) as protein FROM calorie_logs WHERE phone_number = %s AND log_date = CURRENT_DATE",
+            (phone_number,)
+        )
+        totals = cur.fetchone()
+        conn.commit()
+        cur.close()
+        conn.close()
+        total_cals = totals['total'] or 0
+        # Meta calórica para Hyrox: déficit moderado para cuadritos
+        meta = 2200
+        remaining = meta - total_cals
+        return f"✅ Comida registrada\n\n🍽️ {meal_description}\n🔥 {calories} kcal | 🥩 {protein}g proteína\n\n📊 Hoy llevas: {total_cals} kcal\n🎯 Meta: {meta} kcal\n{'✅' if remaining > 0 else '⚠️'} {'Te quedan' if remaining > 0 else 'Excediste por'} {abs(remaining)} kcal"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+def get_calories_today(phone_number):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT meal_description, calories, protein, carbs, fat FROM calorie_logs WHERE phone_number = %s AND log_date = CURRENT_DATE ORDER BY created_at ASC",
+            (phone_number,)
+        )
+        meals = cur.fetchall()
+        cur.execute(
+            "SELECT SUM(calories) as cal, SUM(protein) as prot, SUM(carbs) as carbs, SUM(fat) as fat FROM calorie_logs WHERE phone_number = %s AND log_date = CURRENT_DATE",
+            (phone_number,)
+        )
+        totals = cur.fetchone()
+        cur.close()
+        conn.close()
+        if not meals:
+            return "No has registrado comidas hoy 🍽️\nEmpieza diciéndome qué desayunaste."
+        meta = 2200
+        total = totals['cal'] or 0
+        lines = ["🔥 Calorías de hoy:\n"]
+        for m in meals:
+            lines.append(f"• {m['meal_description']}: {m['calories']} kcal")
+        lines.append(f"\n📊 Total: {total} kcal / {meta} kcal meta")
+        lines.append(f"🥩 Proteína: {totals['prot'] or 0}g")
+        remaining = meta - total
+        if remaining > 0:
+            lines.append(f"✅ Te quedan {remaining} kcal")
+        else:
+            lines.append(f"⚠️ Excediste la meta por {abs(remaining)} kcal")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+def log_sleep(phone_number, hours, quality="regular"):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO health_logs (phone_number, log_type, value, notes) VALUES (%s, 'sleep', %s, %s)",
+            (phone_number, str(hours), quality)
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+        if hours >= 8:
+            tip = "💪 Excelente descanso. Tu cuerpo está listo para entrenar fuerte hoy."
+        elif hours >= 6:
+            tip = "👍 Sueño aceptable. Considera una siesta de 20 min si puedes."
+        else:
+            tip = "⚠️ Poco sueño. Para Hyrox el descanso es crucial. Prioriza dormir esta noche."
+        return f"✅ Sueño registrado: {hours} horas ({quality})\n\n{tip}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+def add_medication(phone_number, name, dosage, frequency, reminder_time=None):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO medications (phone_number, name, dosage, frequency, reminder_time) VALUES (%s, %s, %s, %s, %s) RETURNING id",
+            (phone_number, name, dosage, frequency, reminder_time)
+        )
+        med_id = cur.fetchone()['id']
+        conn.commit()
+        cur.close()
+        conn.close()
+        return f"✅ Medicamento registrado\n\n💊 {name} - {dosage}\n🔁 {frequency}\n⏰ Recordatorio: {reminder_time or 'sin hora específica'}\n🆔 #{med_id}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+def get_health_summary(phone_number):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        # Sueño de anoche
+        cur.execute(
+            "SELECT value, notes FROM health_logs WHERE phone_number = %s AND log_type = 'sleep' AND log_date = CURRENT_DATE ORDER BY created_at DESC LIMIT 1",
+            (phone_number,)
+        )
+        sleep = cur.fetchone()
+        # Estado de ánimo
+        cur.execute(
+            "SELECT value FROM health_logs WHERE phone_number = %s AND log_type = 'mood' AND log_date = CURRENT_DATE ORDER BY created_at DESC LIMIT 1",
+            (phone_number,)
+        )
+        mood = cur.fetchone()
+        # Calorías
+        cur.execute(
+            "SELECT SUM(calories) as total FROM calorie_logs WHERE phone_number = %s AND log_date = CURRENT_DATE",
+            (phone_number,)
+        )
+        cals = cur.fetchone()
+        cur.close()
+        conn.close()
+        lines = ["🏋️ Resumen de salud hoy:\n"]
+        lines.append(f"😴 Sueño: {sleep['value'] + ' hrs (' + sleep['notes'] + ')' if sleep else 'No registrado'}")
+        lines.append(f"🧘 Ánimo: {mood['value'] if mood else 'No registrado'}")
+        lines.append(f"🔥 Calorías: {cals['total'] or 0} / 2200 kcal")
+        lines.append("\n💪 Recomendación Hyrox:")
+        if sleep and float(sleep['value']) >= 7:
+            lines.append("• Buen descanso — día ideal para entrenamiento de alta intensidad")
+        else:
+            lines.append("• Poco sueño — enfócate en movilidad y recuperación hoy")
+        lines.append("• Asegura 2g de proteína por kg de peso corporal")
+        lines.append("• Hidratación: mínimo 3L de agua para Hyrox training")
+        return "\n".join(lines)
     except Exception as e:
         return f"Error: {str(e)}"
 
@@ -299,6 +458,14 @@ If user says 'mis recordatorios', use get_reminders.
 If user says 'agrega meta: [meta]', use add_goal.
 If user says 'mis metas', use get_goals.
 If user says 'actualiza meta #X al Y%', use update_goal_progress.
+
+Leo's fitness goal is to get six-pack abs and train for Hyrox competition. His daily calorie target is 2200 kcal with high protein.
+If user says 'me siento [estado]' or 'estoy [estado]', use log_mood tool.
+If user sends a photo of food, analyze calories and use log_calories tool automatically.
+If user says 'dormí X horas', use log_sleep tool.
+If user says 'qué comí hoy' or 'mis calorías', use get_calories_today tool.
+If user says 'agrega medicamento [nombre]', use add_medication tool.
+If user says 'resumen de salud' or 'cómo voy hoy', use get_health_summary tool.
 
 When the user sends an image, analyze it intelligently:
 
@@ -545,6 +712,69 @@ JARVIS_TOOLS = [
             },
             "required": ["goal_id", "progress"]
         }
+    },
+    {
+        "name": "log_mood",
+        "description": "Registra el estado de ánimo del usuario.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "mood": {"type": "string", "description": "Estado de ánimo: feliz, triste, ansioso, motivado, cansado, estresado, etc."},
+                "notes": {"type": "string", "description": "Notas adicionales (opcional)"}
+            },
+            "required": ["mood"]
+        }
+    },
+    {
+        "name": "log_calories",
+        "description": "Registra las calorías de una comida.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "meal_description": {"type": "string", "description": "Descripción de la comida"},
+                "calories": {"type": "integer", "description": "Calorías estimadas"},
+                "protein": {"type": "integer", "description": "Proteína en gramos"},
+                "carbs": {"type": "integer", "description": "Carbohidratos en gramos"},
+                "fat": {"type": "integer", "description": "Grasa en gramos"}
+            },
+            "required": ["meal_description", "calories"]
+        }
+    },
+    {
+        "name": "get_calories_today",
+        "description": "Muestra el resumen de calorías del día.",
+        "input_schema": {"type": "object", "properties": {}}
+    },
+    {
+        "name": "add_medication",
+        "description": "Agrega un medicamento con recordatorio.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Nombre del medicamento"},
+                "dosage": {"type": "string", "description": "Dosis (ej. 500mg)"},
+                "frequency": {"type": "string", "description": "Frecuencia (ej. cada 8 horas, una vez al día)"},
+                "reminder_time": {"type": "string", "description": "Hora del recordatorio en formato HH:MM"}
+            },
+            "required": ["name", "dosage", "frequency"]
+        }
+    },
+    {
+        "name": "log_sleep",
+        "description": "Registra las horas de sueño.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "hours": {"type": "number", "description": "Horas de sueño"},
+                "quality": {"type": "string", "description": "Calidad: bueno, regular, malo"}
+            },
+            "required": ["hours"]
+        }
+    },
+    {
+        "name": "get_health_summary",
+        "description": "Muestra resumen de salud del día con recomendaciones para Hyrox.",
+        "input_schema": {"type": "object", "properties": {}}
     }
 ]
 
@@ -947,6 +1177,18 @@ def execute_tool(tool_name, tool_input, sender_number):
         return get_goals(phone_number=sender_number)
     elif tool_name == "update_goal_progress":
         return update_goal_progress(phone_number=sender_number, goal_id=tool_input.get("goal_id"), progress=tool_input.get("progress"))
+    elif tool_name == "log_mood":
+        return log_mood(phone_number=sender_number, mood=tool_input.get("mood"), notes=tool_input.get("notes", ""))
+    elif tool_name == "log_calories":
+        return log_calories(phone_number=sender_number, meal_description=tool_input.get("meal_description"), calories=tool_input.get("calories"), protein=tool_input.get("protein", 0), carbs=tool_input.get("carbs", 0), fat=tool_input.get("fat", 0))
+    elif tool_name == "get_calories_today":
+        return get_calories_today(phone_number=sender_number)
+    elif tool_name == "log_sleep":
+        return log_sleep(phone_number=sender_number, hours=tool_input.get("hours"), quality=tool_input.get("quality", "regular"))
+    elif tool_name == "add_medication":
+        return add_medication(phone_number=sender_number, name=tool_input.get("name"), dosage=tool_input.get("dosage"), frequency=tool_input.get("frequency"), reminder_time=tool_input.get("reminder_time"))
+    elif tool_name == "get_health_summary":
+        return get_health_summary(phone_number=sender_number)
     else:
         return f"Herramienta {tool_name} no reconocida."
 
