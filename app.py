@@ -69,12 +69,12 @@ def get_expenses_summary(phone_number, period="day"):
         conn.close()
         if not expenses:
             return f"No has registrado gastos {title}."
-        lines = [f"💸 *Gastos de {title}:*\n"]
+        lines = [f"💸 Gastos de {title}:\n"]
         total = 0
         for e in expenses:
-            lines.append(f"🏷️ Categoría: {e['category']}\n💵 Monto: ${e['total']:.2f}\n")
+            lines.append(f"  • {e['category']}: ${e['total']:.2f}")
             total += float(e['total'])
-        lines.append(f"💰 *Total:* ${total:.2f}")
+        lines.append(f"\n💰 Total: ${total:.2f}")
         return "\n".join(lines)
     except Exception as e:
         return f"Error: {str(e)}"
@@ -110,18 +110,22 @@ def get_debts(phone_number):
         cur.close()
         conn.close()
         if not debts:
-            return "No tienes deudas pendientes. ¡Estás al corriente! ✅"
+            return "No tienes deudas pendientes ✅\n¡Estás al corriente!"
         owe = [d for d in debts if d['debt_type'] == 'owe']
         owed = [d for d in debts if d['debt_type'] == 'owed']
-        lines = ["💸 *Deudas pendientes*\n"]
+        lines = ["💸 Tus deudas pendientes:\n"]
         if owe:
-            lines.append("🔴 *Yo debo:*")
+            lines.append("🔴 Tú debes:")
             for d in owe:
-                lines.append(f"\n👤 Persona: {d['person']}\n💵 Monto: ${d['amount']}\n📝 Descripción: {d['description'] or 'N/A'}\n🆔 ID: #{d['id']}")
+                lines.append(f"  • #{d['id']} {d['person']}: ${d['amount']}")
+                if d['description']:
+                    lines.append(f"    📝 {d['description']}")
         if owed:
-            lines.append("\n🟢 *Me deben:*")
+            lines.append("\n🟢 Te deben:")
             for d in owed:
-                lines.append(f"\n👤 Persona: {d['person']}\n💵 Monto: ${d['amount']}\n📝 Descripción: {d['description'] or 'N/A'}\n🆔 ID: #{d['id']}")
+                lines.append(f"  • #{d['id']} {d['person']}: ${d['amount']}")
+                if d['description']:
+                    lines.append(f"    📝 {d['description']}")
         return "\n".join(lines)
     except Exception as e:
         return f"Error: {str(e)}"
@@ -173,9 +177,11 @@ def get_reminders(phone_number):
         conn.close()
         if not reminders:
             return "No tienes recordatorios próximos."
-        lines = ["🔔 *Próximos recordatorios:*\n"]
+        lines = ["🔔 Próximos recordatorios:\n"]
         for r in reminders:
-            lines.append(f"📌 Título: {r['title']}\n📅 Fecha: {r['reminder_date']}\n📝 Descripción: {r['description'] or 'N/A'}\n🆔 ID: #{r['id']}\n")
+            lines.append(f"  • #{r['id']} {r['title']} ({r['reminder_date']})")
+            if r['description']:
+                lines.append(f"    📝 {r['description']}")
         return "\n".join(lines)
     except Exception as e:
         return f"Error: {str(e)}"
@@ -209,10 +215,13 @@ def get_goals(phone_number):
         conn.close()
         if not goals:
             return "No tienes metas activas. ¡Agrega una!"
-        lines = ["🎯 *Tus metas activas:*\n"]
+        lines = ["🎯 Tus metas activas:\n"]
         for g in goals:
             bar = "█" * (g['progress'] // 10) + "░" * (10 - g['progress'] // 10)
-            lines.append(f"🎯 Meta: {g['title']}\n📅 Fecha límite: {g['target_date'] or 'N/A'}\n📊 Progreso: [{bar}] {g['progress']}%\n🆔 ID: #{g['id']}\n")
+            lines.append(f"  • #{g['id']} {g['title']}")
+            lines.append(f"    📊 [{bar}] {g['progress']}%")
+            if g['target_date']:
+                lines.append(f"    📅 Límite: {g['target_date']}")
         return "\n".join(lines)
     except Exception as e:
         return f"Error: {str(e)}"
