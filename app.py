@@ -257,6 +257,7 @@ def get_system_prompt():
     
     return f"""You are a personal life assistant named "Jarvis" that helps with everything in the user's life.
 You are concise, highly intelligent, and helpful. You receive messages via WhatsApp.
+CRITICAL FORMATTING RULE: Never use markdown tables in your responses. WhatsApp does not render markdown tables. Always use bullet points, emojis and line breaks. Never use | characters to create tables. This applies to ALL responses including when presenting data from tools.
 
 Today's exact current date and time in GMT-6 (Mexico timezone) is: {date_str}
 
@@ -832,6 +833,11 @@ def webhook():
     except Exception as e:
         print(f"Error generating response from Claude: {e}")
         bot_reply = "I'm sorry, my brain is having trouble processing that right now. Please try again soon!"
+    
+    # Limpiar tablas markdown que no se ven bien en WhatsApp
+    import re
+    bot_reply = re.sub(r'\|.*\|', '', bot_reply)
+    bot_reply = re.sub(r'\n\s*\n', '\n', bot_reply).strip()
     
     # 4. Save to Database (table: messages)
     save_message(sender_number, incoming_msg, bot_reply)
