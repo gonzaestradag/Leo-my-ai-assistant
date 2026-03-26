@@ -11,6 +11,25 @@ load_dotenv()
 
 app = Flask(__name__)
 
+# ─── DEDUPLICACIÓN: evita procesar el mismo mensaje dos veces ────────────────
+# Twilio a veces reenvía el mismo webhook si no responde suficientemente rápido
+import threading
+_processed_sids = set()
+_processed_sids_lock = threading.Lock()
+
+def is_duplicate(message_sid):
+    """Retorna True si este MessageSid ya fue procesado."""
+    with _processed_sids_lock:
+        if message_sid in _processed_sids:
+            return True
+        _processed_sids.add(message_sid)
+        # Limpiar el set si crece mucho (guardar solo los últimos 200)
+        if len(_processed_sids) > 200:
+            oldest = list(_processed_sids)[:100]
+            for sid in oldest:
+                _processed_sids.discard(sid)
+        return False
+
 # Start Morning Briefing Scheduler
 from scheduler_helper import start_scheduler
 # Avoid running multiple times if using standard Flask reloader locally
@@ -1108,7 +1127,15 @@ def webhook():
     """
     incoming_msg = request.values.get("Body", "").strip()
     sender_number = request.values.get("From", "")
-    
+    message_sid = request.values.get("MessageSid", "")
+
+    # ── Protección anti-duplicados ──────────────────────────────────────────
+    # Twilio reenvía el webhook si no responde a tiempo → evita eventos dobles
+    if message_sid and is_duplicate(message_sid):
+        print(f"[DEDUP] MessageSid {message_sid} ya procesado, ignorando.")
+        resp = MessagingResponse()
+        return str(resp)  # respuesta vacía, Twilio no reintenta
+
     media_url = request.values.get("MediaUrl0", "")
     media_type = request.values.get("MediaContentType0", "")
     
