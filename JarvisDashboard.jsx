@@ -1,4 +1,13 @@
 import { useState, useEffect, useRef } from "react";
+import { Link, useLocation } from "react-router-dom";
+
+const NAV_ITEMS = [
+  { label: "Dashboard",  to: "/" },
+  { label: "Salud",      to: "/salud" },
+  { label: "Agentes IA", to: "/agentes" },
+  { label: "Chat",       to: "/chat" },
+  { label: "Inversiones",to: "/inversiones" },
+];
 
 // ─── MOCK DATA (replace each section with your Flask API calls) ───────────────
 const API_BASE = "https://leo-my-ai-assistant.onrender.com"; // tu Render URL
@@ -371,6 +380,7 @@ function TodoExpanded({ todos }) {
 // ─── MAIN DASHBOARD ─────────────────────────────────────────────────────────
 export default function JarvisDashboard() {
   const now = useTime();
+  const location = useLocation();
   const [modal, setModal] = useState(null);
   const data = MOCK;
 
@@ -407,16 +417,20 @@ export default function JarvisDashboard() {
             </div>
           </div>
           <nav style={{ display: "flex", gap: 6 }}>
-            {["Dashboard", "Salud", "Agentes IA", "Chat", "Inversiones"].map((item, i) => (
-              <button key={item} style={{
-                padding: "6px 14px", borderRadius: 8, border: "1px solid",
-                borderColor: i === 0 ? "#2563EB" : "#E2E8F0",
-                background: i === 0 ? "#2563EB" : "#fff",
-                color: i === 0 ? "#fff" : "#64748B",
-                fontSize: 13, fontWeight: 500, cursor: "pointer",
-                transition: "all .15s"
-              }}>{item}</button>
-            ))}
+            {NAV_ITEMS.map(({ label, to }) => {
+              const active = location.pathname === to;
+              return (
+                <Link key={label} to={to} style={{
+                  padding: "6px 14px", borderRadius: 8, border: "1px solid",
+                  borderColor: active ? "#2563EB" : "#E2E8F0",
+                  background: active ? "#2563EB" : "#fff",
+                  color: active ? "#fff" : "#64748B",
+                  fontSize: 13, fontWeight: 500, cursor: "pointer",
+                  transition: "all .15s",
+                  textDecoration: "none",
+                }}>{label}</Link>
+              );
+            })}
           </nav>
         </div>
 
