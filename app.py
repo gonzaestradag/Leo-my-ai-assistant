@@ -1,5 +1,6 @@
 import os
-from flask import Flask, request
+from flask import Flask, request, jsonify
+from flask_cors import CORS
 from twilio.twiml.messaging_response import MessagingResponse
 from anthropic import Anthropic
 import psycopg2
@@ -10,6 +11,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 app = Flask(__name__)
+CORS(app, resources={r"/chat": {"origins": "*"}})
 
 # ─── DEDUPLICACIÓN: evita procesar el mismo mensaje dos veces ────────────────
 # Twilio a veces reenvía el mismo webhook si no responde suficientemente rápido
@@ -1338,6 +1340,47 @@ def execute_tool(tool_name, tool_input, sender_number):
         return get_bb_grades()
     else:
         return f"Herramienta {tool_name} no reconocida."
+
+@app.route("/chat", methods=["POST"])
+def chat():
+    """
+    Web dashboard chat endpoint.
+    Expects JSON: { "message": "...", "session_id": "..." }
+    Returns JSON: { "reply": "..." }
+    """
+    data = request.get_json(force=True, silent=True) or {}
+    user_message = (data.get("message") or "").strip()
+    session_id = (data.get("session_id") or "web_dashboard").strip()
+
+    if not user_message:
+        return jsonify({"error": "message is required"}), 400
+
+    # Re-use the same conversation history stored in DB, keyed by session_id
+    web_phone = f"web:{session_id}"
+    history = get_conversation_history(web_phone, limit=5)
+    history.append({"role": "user", "content": user_message})
+
+    try:
+        response = anthropic_client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=1000,
+            system=get_system_prompt(),
+            messages=history,
+            tools=JARVIS_TOOLS,
+        )
+
+        if response.stop_reason == "tool_use":
+            bot_reply = process_tool_use(response, history, web_phone)
+        else:
+            bot_reply = get_text_from_response(response)
+
+    except Exception as e:
+        print(f"Error in /chat endpoint: {e}")
+        return jsonify({"error": "Error procesando la solicitud"}), 500
+
+    save_message(web_phone, user_message, bot_reply)
+    return jsonify({"reply": bot_reply})
+
 
 # Healthcheck route useful for Render
 @app.route("/", methods=["GET"])

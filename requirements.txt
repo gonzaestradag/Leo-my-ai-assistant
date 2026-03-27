@@ -1,4 +1,5 @@
 Flask==3.0.2
+flask-cors==4.0.0
 twilio==9.0.2
 anthropic>=0.49.0
 httpx==0.27.2
