@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app, resources={r"/chat": {"origins": "*"}})
+CORS(app, resources={r"/chat": {"origins": "*"}, r"/api/*": {"origins": "*"}})
 
 # ─── DEDUPLICACIÓN: evita procesar el mismo mensaje dos veces ────────────────
 # Twilio a veces reenvía el mismo webhook si no responde suficientemente rápido
@@ -1386,6 +1386,134 @@ def chat():
 @app.route("/", methods=["GET"])
 def index():
     return "Jarvis AI WhatsApp Assistant is running!", 200
+
+# ─── Dashboard REST API ───────────────────────────────────────────────────────
+
+DASHBOARD_PHONE = "5218129354808"
+_CATEGORY_COLORS = ["#2563EB", "#7C3AED", "#059669", "#D97706", "#6B7280", "#EF4444", "#10B981"]
+
+@app.route("/api/calendar", methods=["GET"])
+def api_calendar():
+    try:
+        from calendar_helper import get_calendar_service
+        import datetime
+        service = get_calendar_service()
+        if not service:
+            return jsonify([])
+        now = datetime.datetime.now()
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat() + "Z"
+        end   = now.replace(hour=23, minute=59, second=59, microsecond=0).isoformat() + "Z"
+        result = service.events().list(
+            calendarId=os.getenv("GOOGLE_CALENDAR_ID", "primary"),
+            timeMin=start, timeMax=end,
+            singleEvents=True, orderBy="startTime"
+        ).execute()
+        events = []
+        for ev in result.get("items", []):
+            start_dt = ev["start"].get("dateTime", ev["start"].get("date", ""))
+            events.append({
+                "id":    ev.get("id"),
+                "title": ev.get("summary", "Sin título"),
+                "time":  start_dt[11:16] if "T" in start_dt else start_dt,
+                "date":  start_dt,
+            })
+        return jsonify(events)
+    except Exception as e:
+        print(f"Error in /api/calendar: {e}")
+        return jsonify([])
+
+@app.route("/api/tasks", methods=["GET"])
+def api_tasks():
+    try:
+        conn = get_db_connection()
+        cur  = conn.cursor()
+        cur.execute(
+            "SELECT id, task, completed FROM tasks WHERE phone_number = %s AND task_date = CURRENT_DATE ORDER BY id",
+            (DASHBOARD_PHONE,)
+        )
+        rows = cur.fetchall()
+        cur.close(); conn.close()
+        return jsonify([{"id": r["id"], "text": r["task"], "done": r["completed"], "priority": "media"} for r in rows])
+    except Exception as e:
+        print(f"Error in /api/tasks: {e}")
+        return jsonify([])
+
+@app.route("/api/gmail", methods=["GET"])
+def api_gmail():
+    try:
+        from gmail_helper import get_gmail_service
+        service = get_gmail_service()
+        if not service:
+            return jsonify([])
+        results = service.users().messages().list(userId="me", maxResults=5, labelIds=["INBOX"]).execute()
+        emails = []
+        for msg in results.get("messages", []):
+            data = service.users().messages().get(
+                userId="me", id=msg["id"], format="metadata",
+                metadataHeaders=["From", "Subject", "Date"]
+            ).execute()
+            headers = {h["name"]: h["value"] for h in data.get("payload", {}).get("headers", [])}
+            emails.append({
+                "id":      msg["id"],
+                "from":    headers.get("From", "Desconocido"),
+                "subject": headers.get("Subject", "Sin asunto"),
+                "unread":  "UNREAD" in data.get("labelIds", []),
+                "time":    headers.get("Date", ""),
+            })
+        return jsonify(emails)
+    except Exception as e:
+        print(f"Error in /api/gmail: {e}")
+        return jsonify([])
+
+@app.route("/api/expenses", methods=["GET"])
+def api_expenses():
+    try:
+        conn = get_db_connection()
+        cur  = conn.cursor()
+        cur.execute(
+            """SELECT category, SUM(amount) AS total FROM expenses
+               WHERE phone_number = %s
+                 AND DATE_TRUNC('month', expense_date) = DATE_TRUNC('month', CURRENT_DATE)
+               GROUP BY category ORDER BY total DESC""",
+            (DASHBOARD_PHONE,)
+        )
+        rows = cur.fetchall()
+        cur.execute(
+            """SELECT COALESCE(SUM(amount), 0) AS grand_total FROM expenses
+               WHERE phone_number = %s
+                 AND DATE_TRUNC('month', expense_date) = DATE_TRUNC('month', CURRENT_DATE)""",
+            (DASHBOARD_PHONE,)
+        )
+        grand = cur.fetchone()
+        cur.close(); conn.close()
+        categories = [
+            {"name": r["category"], "amount": float(r["total"]), "color": _CATEGORY_COLORS[i % len(_CATEGORY_COLORS)]}
+            for i, r in enumerate(rows)
+        ]
+        return jsonify({"total": float(grand["grand_total"]), "budget": 12000, "categories": categories})
+    except Exception as e:
+        print(f"Error in /api/expenses: {e}")
+        return jsonify({"total": 0, "budget": 12000, "categories": []})
+
+@app.route("/api/goals", methods=["GET"])
+def api_goals():
+    try:
+        conn = get_db_connection()
+        cur  = conn.cursor()
+        cur.execute(
+            "SELECT id, title, progress FROM goals WHERE phone_number = %s AND completed = FALSE ORDER BY id",
+            (DASHBOARD_PHONE,)
+        )
+        rows = cur.fetchall()
+        cur.close(); conn.close()
+        COLORS = ["#2563EB", "#059669", "#7C3AED", "#D97706", "#EF4444"]
+        return jsonify([
+            {"id": r["id"], "title": r["title"], "current": r["progress"], "target": 100, "unit": "%", "color": COLORS[i % len(COLORS)]}
+            for i, r in enumerate(rows)
+        ])
+    except Exception as e:
+        print(f"Error in /api/goals: {e}")
+        return jsonify([])
 
 if __name__ == "__main__":
     # Bind to 0.0.0.0 to work on Render, read port from environment (Render sets PORT)
