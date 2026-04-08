@@ -1596,6 +1596,76 @@ def api_health():
             "protein_today": 0, "mood_today": None, "medications": [],
         })
 
+@app.route("/api/investments", methods=["GET"])
+def api_investments():
+    import urllib.request as _ur
+    import json as _json
+
+    def _yahoo_price(ticker):
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=1d"
+        try:
+            req = _ur.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with _ur.urlopen(req, timeout=6) as r:
+                data = _json.loads(r.read())
+            return float(data["chart"]["result"][0]["meta"]["regularMarketPrice"])
+        except Exception:
+            return None
+
+    try:
+        conn = get_db_connection()
+        cur  = conn.cursor()
+        cur.execute("SELECT ticker, shares, avg_cost FROM investments ORDER BY ticker")
+        rows = cur.fetchall()
+        cur.close(); conn.close()
+
+        holdings = []
+        total_value = 0.0
+        total_cost  = 0.0
+
+        for r in rows:
+            ticker    = r["ticker"]
+            shares    = float(r["shares"])
+            avg_cost  = float(r["avg_cost"])
+            price     = _yahoo_price(ticker)
+            cost_base = shares * avg_cost
+            if price is not None:
+                value  = shares * price
+                gain   = value - cost_base
+                gain_pct = (gain / cost_base * 100) if cost_base else 0
+            else:
+                value = cost_base
+                gain  = 0.0
+                gain_pct = 0.0
+            total_value += value
+            total_cost  += cost_base
+            holdings.append({
+                "ticker":    ticker,
+                "shares":    shares,
+                "avg_cost":  avg_cost,
+                "price":     price,
+                "value":     round(value, 2),
+                "cost_base": round(cost_base, 2),
+                "gain":      round(gain, 2),
+                "gain_pct":  round(gain_pct, 2),
+            })
+
+        total_gain     = total_value - total_cost
+        total_gain_pct = (total_gain / total_cost * 100) if total_cost else 0
+
+        return jsonify({
+            "holdings":       holdings,
+            "total_value":    round(total_value, 2),
+            "total_cost":     round(total_cost, 2),
+            "total_gain":     round(total_gain, 2),
+            "total_gain_pct": round(total_gain_pct, 2),
+        })
+    except Exception as e:
+        print(f"Error in /api/investments: {e}")
+        return jsonify({
+            "holdings": [], "total_value": 0, "total_cost": 0,
+            "total_gain": 0, "total_gain_pct": 0,
+        })
+
 if __name__ == "__main__":
     # Bind to 0.0.0.0 to work on Render, read port from environment (Render sets PORT)
     port = int(os.getenv("PORT", 5000))
