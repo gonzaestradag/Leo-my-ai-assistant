@@ -1666,6 +1666,25 @@ def api_investments():
             "total_gain": 0, "total_gain_pct": 0,
         })
 
+@app.route("/api/investments/<ticker>", methods=["DELETE"])
+def api_investments_delete(ticker):
+    try:
+        conn = get_db_connection()
+        cur  = conn.cursor()
+        cur.execute(
+            "DELETE FROM investments WHERE ticker = %s RETURNING ticker",
+            (ticker.upper(),)
+        )
+        deleted = cur.fetchone()
+        conn.commit()
+        cur.close(); conn.close()
+        if deleted:
+            return jsonify({"ok": True, "ticker": deleted["ticker"]}), 200
+        return jsonify({"ok": False, "error": "ticker not found"}), 404
+    except Exception as e:
+        print(f"Error in DELETE /api/investments/{ticker}: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
 if __name__ == "__main__":
     # Bind to 0.0.0.0 to work on Render, read port from environment (Render sets PORT)
     port = int(os.getenv("PORT", 5000))
