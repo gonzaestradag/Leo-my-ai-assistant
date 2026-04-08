@@ -1685,6 +1685,93 @@ def api_investments_delete(ticker):
         print(f"Error in DELETE /api/investments/{ticker}: {e}")
         return jsonify({"ok": False, "error": str(e)}), 500
 
+# ─── PORTFOLIO SNAPSHOT HELPERS ──────────────────────────────────────────────
+
+def _yahoo_price_simple(ticker):
+    import urllib.request as _ur, json as _json
+    try:
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=1d"
+        req = _ur.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with _ur.urlopen(req, timeout=6) as r:
+            data = _json.loads(r.read())
+        return float(data["chart"]["result"][0]["meta"]["regularMarketPrice"])
+    except Exception:
+        return None
+
+def _take_portfolio_snapshot():
+    conn = get_db_connection()
+    cur  = conn.cursor()
+    cur.execute("SELECT ticker, shares, avg_cost FROM investments ORDER BY ticker")
+    rows = cur.fetchall()
+    total_value = 0.0
+    total_cost  = 0.0
+    for r in rows:
+        shares   = float(r["shares"])
+        avg_cost = float(r["avg_cost"])
+        price    = _yahoo_price_simple(r["ticker"])
+        cost_base = shares * avg_cost
+        total_value += shares * price if price else cost_base
+        total_cost  += cost_base
+    cur.execute("""
+        INSERT INTO portfolio_snapshots (snapshot_date, total_value, total_cost)
+        VALUES (CURRENT_DATE, %s, %s)
+        ON CONFLICT (snapshot_date) DO UPDATE
+        SET total_value = EXCLUDED.total_value, total_cost = EXCLUDED.total_cost
+    """, (round(total_value, 2), round(total_cost, 2)))
+    conn.commit()
+    cur.close(); conn.close()
+    return {"total_value": round(total_value, 2), "total_cost": round(total_cost, 2)}
+
+@app.route("/api/investments/snapshot", methods=["POST"])
+def api_investments_snapshot():
+    try:
+        result = _take_portfolio_snapshot()
+        return jsonify({"ok": True, **result})
+    except Exception as e:
+        print(f"Error in POST /api/investments/snapshot: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.route("/api/investments/performance", methods=["GET"])
+def api_investments_performance():
+    try:
+        from datetime import date, timedelta
+        conn = get_db_connection()
+        cur  = conn.cursor()
+        cur.execute("""
+            SELECT snapshot_date, total_value FROM portfolio_snapshots
+            WHERE snapshot_date IN (
+                CURRENT_DATE,
+                CURRENT_DATE - INTERVAL '1 day',
+                CURRENT_DATE - INTERVAL '7 days',
+                CURRENT_DATE - INTERVAL '30 days',
+                CURRENT_DATE - INTERVAL '365 days'
+            )
+        """)
+        snap = {str(r["snapshot_date"]): float(r["total_value"]) for r in cur.fetchall()}
+        cur.close(); conn.close()
+
+        today     = date.today()
+        today_val = snap.get(str(today))
+
+        def _gain(prev_key):
+            prev = snap.get(str(today - timedelta(days=prev_key)))
+            if today_val is None or prev is None:
+                return {"usd": None, "pct": None}
+            usd = round(today_val - prev, 2)
+            pct = round((usd / prev) * 100, 2) if prev else 0
+            return {"usd": usd, "pct": pct}
+
+        return jsonify({
+            "today_value": today_val,
+            "day_gain":   _gain(1),
+            "week_gain":  _gain(7),
+            "month_gain": _gain(30),
+            "year_gain":  _gain(365),
+        })
+    except Exception as e:
+        print(f"Error in /api/investments/performance: {e}")
+        return jsonify({"today_value": None, "day_gain": {}, "week_gain": {}, "month_gain": {}, "year_gain": {}})
+
 if __name__ == "__main__":
     # Bind to 0.0.0.0 to work on Render, read port from environment (Render sets PORT)
     port = int(os.getenv("PORT", 5000))
