@@ -1515,6 +1515,87 @@ def api_goals():
         print(f"Error in /api/goals: {e}")
         return jsonify([])
 
+@app.route("/api/health", methods=["GET"])
+def api_health():
+    try:
+        conn = get_db_connection()
+        cur  = conn.cursor()
+
+        # Sueño hoy
+        cur.execute(
+            "SELECT value FROM health_logs WHERE phone_number = %s AND log_type = 'sleep' AND log_date = CURRENT_DATE ORDER BY created_at DESC LIMIT 1",
+            (DASHBOARD_PHONE,)
+        )
+        row = cur.fetchone()
+        sleep_today = float(row["value"]) if row else None
+
+        # Sueño últimos 7 días
+        cur.execute(
+            """SELECT log_date, value FROM health_logs
+               WHERE phone_number = %s AND log_type = 'sleep'
+                 AND log_date >= CURRENT_DATE - INTERVAL '6 days'
+               ORDER BY log_date ASC""",
+            (DASHBOARD_PHONE,)
+        )
+        sleep_week = [{"date": str(r["log_date"]), "hours": float(r["value"])} for r in cur.fetchall()]
+
+        # Mood hoy
+        cur.execute(
+            "SELECT value FROM health_logs WHERE phone_number = %s AND log_type = 'mood' AND log_date = CURRENT_DATE ORDER BY created_at DESC LIMIT 1",
+            (DASHBOARD_PHONE,)
+        )
+        row = cur.fetchone()
+        mood_today = int(row["value"]) if row else None
+
+        # Calorías y proteína hoy
+        cur.execute(
+            "SELECT COALESCE(SUM(calories),0) AS cal, COALESCE(SUM(protein),0) AS prot FROM calorie_logs WHERE phone_number = %s AND log_date = CURRENT_DATE",
+            (DASHBOARD_PHONE,)
+        )
+        row = cur.fetchone()
+        calories_today = float(row["cal"]) if row else 0
+        protein_today  = float(row["prot"]) if row else 0
+
+        # Medicamentos activos
+        cur.execute(
+            "SELECT name, dosage, reminder_time FROM medications WHERE phone_number = %s ORDER BY reminder_time ASC NULLS LAST",
+            (DASHBOARD_PHONE,)
+        )
+        meds_rows = cur.fetchall()
+
+        # Determinar cuáles ya fueron tomados hoy (log_type='medication' en health_logs)
+        cur.execute(
+            "SELECT notes FROM health_logs WHERE phone_number = %s AND log_type = 'medication' AND log_date = CURRENT_DATE",
+            (DASHBOARD_PHONE,)
+        )
+        taken_set = {r["notes"].lower() for r in cur.fetchall()}
+
+        medications = [
+            {
+                "name": r["name"],
+                "dosage": r["dosage"],
+                "time": str(r["reminder_time"]) if r["reminder_time"] else None,
+                "taken": r["name"].lower() in taken_set,
+            }
+            for r in meds_rows
+        ]
+
+        cur.close(); conn.close()
+        return jsonify({
+            "sleep_today":    sleep_today,
+            "sleep_week":     sleep_week,
+            "calories_today": calories_today,
+            "protein_today":  protein_today,
+            "mood_today":     mood_today,
+            "medications":    medications,
+        })
+    except Exception as e:
+        print(f"Error in /api/health: {e}")
+        return jsonify({
+            "sleep_today": None, "sleep_week": [], "calories_today": 0,
+            "protein_today": 0, "mood_today": None, "medications": [],
+        })
+
 if __name__ == "__main__":
     # Bind to 0.0.0.0 to work on Render, read port from environment (Render sets PORT)
     port = int(os.getenv("PORT", 5000))
