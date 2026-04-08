@@ -372,11 +372,56 @@ def ask_sleep_checkin():
 
 _scheduler = None
 
+def take_portfolio_snapshot():
+    """Fetch current prices for all investments and save a daily snapshot."""
+    print("Executing Portfolio Snapshot Job...")
+    import urllib.request as _ur, json as _json
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url:
+        print("Portfolio snapshot: no DATABASE_URL")
+        return
+
+    def _yahoo_price(ticker):
+        try:
+            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=1d"
+            req = _ur.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with _ur.urlopen(req, timeout=6) as r:
+                data = _json.loads(r.read())
+            return float(data["chart"]["result"][0]["meta"]["regularMarketPrice"])
+        except Exception:
+            return None
+
+    try:
+        conn = psycopg2.connect(database_url, cursor_factory=psycopg2.extras.RealDictCursor)
+        cur  = conn.cursor()
+        cur.execute("SELECT ticker, shares, avg_cost FROM investments ORDER BY ticker")
+        rows = cur.fetchall()
+        total_value = 0.0
+        total_cost  = 0.0
+        for r in rows:
+            shares   = float(r["shares"])
+            avg_cost = float(r["avg_cost"])
+            price    = _yahoo_price(r["ticker"])
+            cost_base = shares * avg_cost
+            total_value += shares * price if price else cost_base
+            total_cost  += cost_base
+        cur.execute("""
+            INSERT INTO portfolio_snapshots (snapshot_date, total_value, total_cost)
+            VALUES (CURRENT_DATE, %s, %s)
+            ON CONFLICT (snapshot_date) DO UPDATE
+            SET total_value = EXCLUDED.total_value, total_cost = EXCLUDED.total_cost
+        """, (round(total_value, 2), round(total_cost, 2)))
+        conn.commit()
+        cur.close(); conn.close()
+        print(f"Portfolio snapshot saved: total_value={total_value:.2f}")
+    except Exception as e:
+        print(f"Error in take_portfolio_snapshot: {e}")
+
 def start_scheduler():
     global _scheduler
     if _scheduler is not None and _scheduler.running:
         return _scheduler
-    
+
     _scheduler = BackgroundScheduler(timezone='America/Mexico_City')
     _scheduler.add_job(lambda: run_in_background(ask_sleep_checkin), 'cron', hour=7, minute=0, id='sleep_checkin', replace_existing=True)
     _scheduler.add_job(lambda: run_in_background(send_morning_briefing), 'cron', hour=8, minute=20, id='morning_briefing', replace_existing=True)
@@ -385,7 +430,8 @@ def start_scheduler():
     _scheduler.add_job(lambda: run_in_background(cleanup_daily_tasks), 'cron', hour=23, minute=59, id='task_cleanup', replace_existing=True)
     _scheduler.add_job(lambda: run_in_background(send_monthly_report), 'cron', day=1, hour=9, id='monthly_report', replace_existing=True)
     _scheduler.add_job(lambda: run_in_background(check_daily_reminders), 'cron', hour=9, minute=0, id='daily_reminders', replace_existing=True)
-    
+    _scheduler.add_job(lambda: run_in_background(take_portfolio_snapshot), 'cron', hour=18, minute=0, id='portfolio_snapshot', replace_existing=True)
+
     _scheduler.start()
     print('Background scheduler started.')
     return _scheduler
