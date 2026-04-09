@@ -1351,6 +1351,7 @@ def chat():
     data = request.get_json(force=True, silent=True) or {}
     user_message = (data.get("message") or "").strip()
     session_id = (data.get("session_id") or "web_dashboard").strip()
+    custom_system = (data.get("system_prompt") or "").strip()
 
     if not user_message:
         return jsonify({"error": "message is required"}), 400
@@ -1360,13 +1361,16 @@ def chat():
     history = get_conversation_history(web_phone, limit=5)
     history.append({"role": "user", "content": user_message})
 
+    active_system = custom_system if custom_system else get_system_prompt()
+    active_tools  = [] if custom_system else JARVIS_TOOLS
+
     try:
         response = anthropic_client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=1000,
-            system=get_system_prompt(),
+            max_tokens=2000,
+            system=active_system,
             messages=history,
-            tools=JARVIS_TOOLS,
+            tools=active_tools,
         )
 
         if response.stop_reason == "tool_use":
