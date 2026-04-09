@@ -1902,6 +1902,103 @@ def api_investments_trade():
         print(f"Error in /api/investments/trade: {e}")
         return jsonify({"ok": False, "error": str(e)}), 500
 
+@app.route("/api/calendar/month", methods=["GET"])
+def api_calendar_month():
+    try:
+        from calendar_helper import get_calendar_service
+        import calendar as cal_mod
+        year  = int(request.args.get("year",  datetime.datetime.now().year))
+        month = int(request.args.get("month", datetime.datetime.now().month))
+        service = get_calendar_service()
+        if not service:
+            return jsonify([])
+        first_day = datetime.datetime(year, month, 1)
+        last_day  = datetime.datetime(year, month, cal_mod.monthrange(year, month)[1], 23, 59, 59)
+        result = service.events().list(
+            calendarId=os.getenv("GOOGLE_CALENDAR_ID", "primary"),
+            timeMin=first_day.isoformat() + "Z",
+            timeMax=last_day.isoformat() + "Z",
+            singleEvents=True, orderBy="startTime"
+        ).execute()
+        events = []
+        for ev in result.get("items", []):
+            start_raw = ev["start"].get("dateTime", ev["start"].get("date", ""))
+            end_raw   = ev["end"].get("dateTime",   ev["end"].get("date",   ""))
+            events.append({
+                "id":          ev.get("id"),
+                "title":       ev.get("summary", "Sin título"),
+                "description": ev.get("description", ""),
+                "date":        start_raw[:10],
+                "startTime":   start_raw[11:16] if "T" in start_raw else "",
+                "endTime":     end_raw[11:16]   if "T" in end_raw   else "",
+                "allDay":      "T" not in start_raw,
+            })
+        return jsonify(events)
+    except Exception as e:
+        print(f"Error in /api/calendar/month: {e}")
+        return jsonify([])
+
+
+@app.route("/api/calendar/create", methods=["POST"])
+def api_calendar_create():
+    try:
+        from calendar_helper import get_calendar_service
+        data        = request.get_json() or {}
+        title       = (data.get("title") or "").strip()
+        date        = (data.get("date") or "").strip()        # YYYY-MM-DD
+        start_time  = (data.get("startTime") or "").strip()  # HH:MM
+        end_time    = (data.get("endTime") or "").strip()    # HH:MM
+        description = (data.get("description") or "").strip()
+        if not title or not date:
+            return jsonify({"ok": False, "error": "title y date son requeridos"}), 400
+        service = get_calendar_service()
+        if not service:
+            return jsonify({"ok": False, "error": "No se pudo conectar con Google Calendar"}), 503
+        tz_offset = "-06:00"
+        if start_time and end_time:
+            start_iso = f"{date}T{start_time}:00{tz_offset}"
+            end_iso   = f"{date}T{end_time}:00{tz_offset}"
+            start_spec = {"dateTime": start_iso, "timeZone": "America/Monterrey"}
+            end_spec   = {"dateTime": end_iso,   "timeZone": "America/Monterrey"}
+        else:
+            import datetime as _dt
+            next_day = (_dt.date.fromisoformat(date) + _dt.timedelta(days=1)).isoformat()
+            start_spec = {"date": date}
+            end_spec   = {"date": next_day}
+        body = {"summary": title, "start": start_spec, "end": end_spec}
+        if description:
+            body["description"] = description
+        ev = service.events().insert(
+            calendarId=os.getenv("GOOGLE_CALENDAR_ID", "primary"), body=body
+        ).execute()
+        return jsonify({
+            "ok": True,
+            "id":        ev.get("id"),
+            "title":     ev.get("summary"),
+            "htmlLink":  ev.get("htmlLink"),
+        })
+    except Exception as e:
+        print(f"Error in /api/calendar/create: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/calendar/event/<event_id>", methods=["DELETE"])
+def api_calendar_delete(event_id):
+    try:
+        from calendar_helper import get_calendar_service
+        service = get_calendar_service()
+        if not service:
+            return jsonify({"ok": False, "error": "No se pudo conectar con Google Calendar"}), 503
+        service.events().delete(
+            calendarId=os.getenv("GOOGLE_CALENDAR_ID", "primary"),
+            eventId=event_id
+        ).execute()
+        return jsonify({"ok": True})
+    except Exception as e:
+        print(f"Error in /api/calendar/event DELETE: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 if __name__ == "__main__":
     # Bind to 0.0.0.0 to work on Render, read port from environment (Render sets PORT)
     port = int(os.getenv("PORT", 5000))
