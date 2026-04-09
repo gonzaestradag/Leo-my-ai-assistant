@@ -1832,6 +1832,72 @@ def api_investments_history():
         print(f"Error in /api/investments/history: {e}")
         return jsonify([])
 
+@app.route("/api/investments/trade", methods=["POST"])
+def api_investments_trade():
+    data   = request.get_json() or {}
+    action = data.get("action", "").lower()
+    ticker = (data.get("ticker") or "").upper().strip()
+    shares = float(data.get("shares", 0) or 0)
+    price  = data.get("price")
+
+    if not action or not ticker or shares <= 0:
+        return jsonify({"ok": False, "error": "Parámetros inválidos: se requieren action, ticker y shares > 0"}), 400
+    if action not in ("buy", "sell"):
+        return jsonify({"ok": False, "error": "action debe ser 'buy' o 'sell'"}), 400
+
+    try:
+        conn = get_db_connection()
+        cur  = conn.cursor()
+
+        if action == "sell":
+            cur.execute("SELECT shares, avg_cost FROM investments WHERE ticker = %s", (ticker,))
+            row = cur.fetchone()
+            if not row:
+                cur.close(); conn.close()
+                return jsonify({"ok": False, "error": f"No hay posición abierta para {ticker}"}), 404
+            new_shares = round(float(row["shares"]) - shares, 6)
+            if new_shares <= 0:
+                cur.execute("DELETE FROM investments WHERE ticker = %s", (ticker,))
+                result = {"ticker": ticker, "shares": 0, "avg_cost": 0, "deleted": True}
+            else:
+                cur.execute(
+                    "UPDATE investments SET shares = %s WHERE ticker = %s RETURNING shares, avg_cost",
+                    (new_shares, ticker)
+                )
+                r = cur.fetchone()
+                result = {"ticker": ticker, "shares": float(r["shares"]), "avg_cost": float(r["avg_cost"]), "deleted": False}
+
+        else:  # buy
+            if price is None:
+                cur.close(); conn.close()
+                return jsonify({"ok": False, "error": "Se requiere price para compras"}), 400
+            price = float(price)
+            cur.execute("SELECT shares, avg_cost FROM investments WHERE ticker = %s", (ticker,))
+            row = cur.fetchone()
+            if row:
+                prev_shares = float(row["shares"])
+                prev_cost   = float(row["avg_cost"])
+                new_shares  = prev_shares + shares
+                new_avg     = round(((prev_shares * prev_cost) + (shares * price)) / new_shares, 2)
+                cur.execute(
+                    "UPDATE investments SET shares = %s, avg_cost = %s WHERE ticker = %s RETURNING shares, avg_cost",
+                    (new_shares, new_avg, ticker)
+                )
+            else:
+                cur.execute(
+                    "INSERT INTO investments (ticker, shares, avg_cost) VALUES (%s, %s, %s) RETURNING shares, avg_cost",
+                    (ticker, shares, round(price, 2))
+                )
+            r = cur.fetchone()
+            result = {"ticker": ticker, "shares": float(r["shares"]), "avg_cost": float(r["avg_cost"]), "deleted": False}
+
+        conn.commit()
+        cur.close(); conn.close()
+        return jsonify({"ok": True, **result})
+    except Exception as e:
+        print(f"Error in /api/investments/trade: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
 if __name__ == "__main__":
     # Bind to 0.0.0.0 to work on Render, read port from environment (Render sets PORT)
     port = int(os.getenv("PORT", 5000))
