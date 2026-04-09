@@ -1772,6 +1772,66 @@ def api_investments_performance():
         print(f"Error in /api/investments/performance: {e}")
         return jsonify({"today_value": None, "day_gain": {}, "week_gain": {}, "month_gain": {}, "year_gain": {}})
 
+@app.route("/api/investments/history", methods=["GET"])
+def api_investments_history():
+    try:
+        year  = request.args.get("year",  type=int)
+        month = request.args.get("month", type=int)
+        if not year or not month:
+            from datetime import date
+            today = date.today()
+            year, month = today.year, today.month
+
+        conn = get_db_connection()
+        cur  = conn.cursor()
+
+        # Fetch the month's snapshots plus the last day of prev month (for day-over-day calc)
+        cur.execute("""
+            SELECT snapshot_date, total_value, total_cost
+            FROM portfolio_snapshots
+            WHERE (EXTRACT(YEAR  FROM snapshot_date) = %s
+                   AND EXTRACT(MONTH FROM snapshot_date) = %s)
+               OR snapshot_date = (
+                   SELECT MAX(snapshot_date) FROM portfolio_snapshots
+                   WHERE snapshot_date < make_date(%s, %s, 1)
+               )
+            ORDER BY snapshot_date ASC
+        """, (year, month, year, month))
+        rows = cur.fetchall()
+        cur.close(); conn.close()
+
+        results = []
+        prev_value = None
+        for r in rows:
+            d     = r["snapshot_date"]
+            val   = float(r["total_value"])
+            cost  = float(r["total_cost"])
+            gain       = round(val - cost, 2)
+            gain_pct   = round((gain / cost * 100) if cost else 0, 2)
+            if prev_value is not None:
+                g_day     = round(val - prev_value, 2)
+                g_day_pct = round((g_day / prev_value * 100) if prev_value else 0, 2)
+            else:
+                g_day = g_day_pct = None
+            prev_value = val
+
+            # Only include days within the requested month
+            if d.month == month and d.year == year:
+                results.append({
+                    "date":                  str(d),
+                    "total_value":           val,
+                    "total_cost":            cost,
+                    "gain":                  gain,
+                    "gain_pct":              gain_pct,
+                    "gain_vs_prev_day":      g_day,
+                    "gain_vs_prev_day_pct":  g_day_pct,
+                })
+
+        return jsonify(results)
+    except Exception as e:
+        print(f"Error in /api/investments/history: {e}")
+        return jsonify([])
+
 if __name__ == "__main__":
     # Bind to 0.0.0.0 to work on Render, read port from environment (Render sets PORT)
     port = int(os.getenv("PORT", 5000))
