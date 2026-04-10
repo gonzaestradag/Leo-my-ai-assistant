@@ -1999,6 +1999,25 @@ def api_calendar_delete(event_id):
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+@app.route("/api/mail/send", methods=["POST"])
+def api_mail_send():
+    try:
+        from gmail_helper import send_email
+        data = request.get_json() or {}
+        to      = (data.get("to") or "").strip()
+        subject = (data.get("subject") or "").strip()
+        body    = (data.get("body") or "").strip()
+        if not to or not subject or not body:
+            return jsonify({"ok": False, "error": "to, subject, body son requeridos"}), 400
+        result = send_email(to=to, subject=subject, body=body)
+        if isinstance(result, str) and "Error" in result:
+            return jsonify({"ok": False, "error": result}), 500
+        return jsonify({"ok": True, "message": "Email enviado"})
+    except Exception as e:
+        print(f"Error in /api/mail/send: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 if __name__ == "__main__":
     # Bind to 0.0.0.0 to work on Render, read port from environment (Render sets PORT)
     port = int(os.getenv("PORT", 5000))
