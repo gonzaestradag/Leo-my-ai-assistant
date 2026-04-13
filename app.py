@@ -2366,7 +2366,7 @@ def register():
             "user_id": user_id,
             "email": user['email'],
             "name": user['name'],
-            "exp": datetime.now() + timedelta(hours=24)
+            "exp": datetime.datetime.now() + timedelta(hours=24)
         }
         token = pyjwt.encode(payload, JWT_SECRET, algorithm="HS256")
 
@@ -2407,7 +2407,7 @@ def login():
             "user_id": user['id'],
             "email": user['email'],
             "name": user['name'],
-            "exp": datetime.now() + timedelta(hours=24)
+            "exp": datetime.datetime.now() + timedelta(hours=24)
         }
         token = pyjwt.encode(payload, JWT_SECRET, algorithm="HS256")
 
