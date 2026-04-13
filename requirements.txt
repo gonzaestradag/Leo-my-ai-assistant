@@ -14,3 +14,5 @@ pytz
 openai
 beautifulsoup4
 lxml
+cryptography==42.0.5
+python-binance==1.0.19

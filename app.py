@@ -6,6 +6,9 @@ from anthropic import Anthropic
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
+from cryptography.fernet import Fernet
+import json
+from datetime import datetime
 
 # Load environment variables from .env file (for local development)
 load_dotenv()
@@ -48,6 +51,20 @@ database_url = os.getenv("DATABASE_URL")
 
 def get_db_connection():
     return psycopg2.connect(database_url, cursor_factory=RealDictCursor)
+
+# ─── TRADING: Fernet Encryption Helpers ───────────────────────────────────────
+FERNET_KEY = os.getenv("FERNET_KEY")
+
+def _get_fernet():
+    if not FERNET_KEY:
+        raise ValueError("FERNET_KEY environment variable not set")
+    return Fernet(FERNET_KEY.encode())
+
+def _encrypt(text):
+    return _get_fernet().encrypt(text.encode()).decode()
+
+def _decrypt(token):
+    return _get_fernet().decrypt(token.encode()).decode()
 
 # Import calendar and gmail helper functions
 from calendar_helper import get_todays_events, create_event
@@ -1351,6 +1368,7 @@ def chat():
     data = request.get_json(force=True, silent=True) or {}
     user_message = (data.get("message") or "").strip()
     session_id = (data.get("session_id") or "web_dashboard").strip()
+    custom_system = (data.get("system_prompt") or "").strip()
 
     if not user_message:
         return jsonify({"error": "message is required"}), 400
@@ -1360,13 +1378,16 @@ def chat():
     history = get_conversation_history(web_phone, limit=5)
     history.append({"role": "user", "content": user_message})
 
+    active_system = custom_system if custom_system else get_system_prompt()
+    active_tools  = [] if custom_system else JARVIS_TOOLS
+
     try:
         response = anthropic_client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=1000,
-            system=get_system_prompt(),
+            max_tokens=2000,
+            system=active_system,
             messages=history,
-            tools=JARVIS_TOOLS,
+            tools=active_tools,
         )
 
         if response.stop_reason == "tool_use":
@@ -1514,6 +1535,782 @@ def api_goals():
     except Exception as e:
         print(f"Error in /api/goals: {e}")
         return jsonify([])
+
+@app.route("/api/health", methods=["GET"])
+def api_health():
+    try:
+        conn = get_db_connection()
+        cur  = conn.cursor()
+
+        # Sueño hoy
+        cur.execute(
+            "SELECT value FROM health_logs WHERE phone_number = %s AND log_type = 'sleep' AND log_date = CURRENT_DATE ORDER BY created_at DESC LIMIT 1",
+            (DASHBOARD_PHONE,)
+        )
+        row = cur.fetchone()
+        sleep_today = float(row["value"]) if row else None
+
+        # Sueño últimos 7 días
+        cur.execute(
+            """SELECT log_date, value FROM health_logs
+               WHERE phone_number = %s AND log_type = 'sleep'
+                 AND log_date >= CURRENT_DATE - INTERVAL '6 days'
+               ORDER BY log_date ASC""",
+            (DASHBOARD_PHONE,)
+        )
+        sleep_week = [{"date": str(r["log_date"]), "hours": float(r["value"])} for r in cur.fetchall()]
+
+        # Mood hoy
+        cur.execute(
+            "SELECT value FROM health_logs WHERE phone_number = %s AND log_type = 'mood' AND log_date = CURRENT_DATE ORDER BY created_at DESC LIMIT 1",
+            (DASHBOARD_PHONE,)
+        )
+        row = cur.fetchone()
+        mood_today = int(row["value"]) if row else None
+
+        # Calorías y proteína hoy
+        cur.execute(
+            "SELECT COALESCE(SUM(calories),0) AS cal, COALESCE(SUM(protein),0) AS prot FROM calorie_logs WHERE phone_number = %s AND log_date = CURRENT_DATE",
+            (DASHBOARD_PHONE,)
+        )
+        row = cur.fetchone()
+        calories_today = float(row["cal"]) if row else 0
+        protein_today  = float(row["prot"]) if row else 0
+
+        # Medicamentos activos
+        cur.execute(
+            "SELECT name, dosage, reminder_time FROM medications WHERE phone_number = %s ORDER BY reminder_time ASC NULLS LAST",
+            (DASHBOARD_PHONE,)
+        )
+        meds_rows = cur.fetchall()
+
+        # Determinar cuáles ya fueron tomados hoy (log_type='medication' en health_logs)
+        cur.execute(
+            "SELECT notes FROM health_logs WHERE phone_number = %s AND log_type = 'medication' AND log_date = CURRENT_DATE",
+            (DASHBOARD_PHONE,)
+        )
+        taken_set = {r["notes"].lower() for r in cur.fetchall()}
+
+        medications = [
+            {
+                "name": r["name"],
+                "dosage": r["dosage"],
+                "time": str(r["reminder_time"]) if r["reminder_time"] else None,
+                "taken": r["name"].lower() in taken_set,
+            }
+            for r in meds_rows
+        ]
+
+        cur.close(); conn.close()
+        return jsonify({
+            "sleep_today":    sleep_today,
+            "sleep_week":     sleep_week,
+            "calories_today": calories_today,
+            "protein_today":  protein_today,
+            "mood_today":     mood_today,
+            "medications":    medications,
+        })
+    except Exception as e:
+        print(f"Error in /api/health: {e}")
+        return jsonify({
+            "sleep_today": None, "sleep_week": [], "calories_today": 0,
+            "protein_today": 0, "mood_today": None, "medications": [],
+        })
+
+@app.route("/api/investments", methods=["GET"])
+def api_investments():
+    import urllib.request as _ur
+    import json as _json
+
+    def _yahoo_price(ticker):
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=1d"
+        try:
+            req = _ur.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with _ur.urlopen(req, timeout=6) as r:
+                data = _json.loads(r.read())
+            return float(data["chart"]["result"][0]["meta"]["regularMarketPrice"])
+        except Exception:
+            return None
+
+    try:
+        conn = get_db_connection()
+        cur  = conn.cursor()
+        cur.execute("SELECT ticker, shares, avg_cost FROM investments ORDER BY ticker")
+        rows = cur.fetchall()
+        cur.close(); conn.close()
+
+        holdings = []
+        total_value = 0.0
+        total_cost  = 0.0
+
+        for r in rows:
+            ticker    = r["ticker"]
+            shares    = float(r["shares"])
+            avg_cost  = float(r["avg_cost"])
+            price     = _yahoo_price(ticker)
+            cost_base = shares * avg_cost
+            if price is not None:
+                value  = shares * price
+                gain   = value - cost_base
+                gain_pct = (gain / cost_base * 100) if cost_base else 0
+            else:
+                value = cost_base
+                gain  = 0.0
+                gain_pct = 0.0
+            total_value += value
+            total_cost  += cost_base
+            holdings.append({
+                "ticker":    ticker,
+                "shares":    shares,
+                "avg_cost":  avg_cost,
+                "price":     price,
+                "value":     round(value, 2),
+                "cost_base": round(cost_base, 2),
+                "gain":      round(gain, 2),
+                "gain_pct":  round(gain_pct, 2),
+            })
+
+        total_gain     = total_value - total_cost
+        total_gain_pct = (total_gain / total_cost * 100) if total_cost else 0
+
+        return jsonify({
+            "holdings":       holdings,
+            "total_value":    round(total_value, 2),
+            "total_cost":     round(total_cost, 2),
+            "total_gain":     round(total_gain, 2),
+            "total_gain_pct": round(total_gain_pct, 2),
+        })
+    except Exception as e:
+        print(f"Error in /api/investments: {e}")
+        return jsonify({
+            "holdings": [], "total_value": 0, "total_cost": 0,
+            "total_gain": 0, "total_gain_pct": 0,
+        })
+
+@app.route("/api/investments/<ticker>", methods=["DELETE"])
+def api_investments_delete(ticker):
+    try:
+        conn = get_db_connection()
+        cur  = conn.cursor()
+        cur.execute(
+            "DELETE FROM investments WHERE ticker = %s RETURNING ticker",
+            (ticker.upper(),)
+        )
+        deleted = cur.fetchone()
+        conn.commit()
+        cur.close(); conn.close()
+        if deleted:
+            return jsonify({"ok": True, "ticker": deleted["ticker"]}), 200
+        return jsonify({"ok": False, "error": "ticker not found"}), 404
+    except Exception as e:
+        print(f"Error in DELETE /api/investments/{ticker}: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+# ─── PORTFOLIO SNAPSHOT HELPERS ──────────────────────────────────────────────
+
+def _yahoo_price_simple(ticker):
+    import urllib.request as _ur, json as _json
+    try:
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=1d"
+        req = _ur.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with _ur.urlopen(req, timeout=6) as r:
+            data = _json.loads(r.read())
+        return float(data["chart"]["result"][0]["meta"]["regularMarketPrice"])
+    except Exception:
+        return None
+
+def _take_portfolio_snapshot():
+    conn = get_db_connection()
+    cur  = conn.cursor()
+    cur.execute("SELECT ticker, shares, avg_cost FROM investments ORDER BY ticker")
+    rows = cur.fetchall()
+    total_value = 0.0
+    total_cost  = 0.0
+    for r in rows:
+        shares   = float(r["shares"])
+        avg_cost = float(r["avg_cost"])
+        price    = _yahoo_price_simple(r["ticker"])
+        cost_base = shares * avg_cost
+        total_value += shares * price if price else cost_base
+        total_cost  += cost_base
+    cur.execute("""
+        INSERT INTO portfolio_snapshots (snapshot_date, total_value, total_cost)
+        VALUES (CURRENT_DATE, %s, %s)
+        ON CONFLICT (snapshot_date) DO UPDATE
+        SET total_value = EXCLUDED.total_value, total_cost = EXCLUDED.total_cost
+    """, (round(total_value, 2), round(total_cost, 2)))
+    conn.commit()
+    cur.close(); conn.close()
+    return {"total_value": round(total_value, 2), "total_cost": round(total_cost, 2)}
+
+@app.route("/api/investments/snapshot", methods=["POST"])
+def api_investments_snapshot():
+    try:
+        result = _take_portfolio_snapshot()
+        return jsonify({"ok": True, **result})
+    except Exception as e:
+        print(f"Error in POST /api/investments/snapshot: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.route("/api/investments/performance", methods=["GET"])
+def api_investments_performance():
+    try:
+        from datetime import date, timedelta
+        conn = get_db_connection()
+        cur  = conn.cursor()
+        cur.execute("""
+            SELECT snapshot_date, total_value FROM portfolio_snapshots
+            WHERE snapshot_date IN (
+                CURRENT_DATE,
+                CURRENT_DATE - INTERVAL '1 day',
+                CURRENT_DATE - INTERVAL '7 days',
+                CURRENT_DATE - INTERVAL '30 days',
+                CURRENT_DATE - INTERVAL '365 days'
+            )
+        """)
+        snap = {str(r["snapshot_date"]): float(r["total_value"]) for r in cur.fetchall()}
+        cur.close(); conn.close()
+
+        today     = date.today()
+        today_val = snap.get(str(today))
+
+        def _gain(prev_key):
+            prev = snap.get(str(today - timedelta(days=prev_key)))
+            if today_val is None or prev is None:
+                return {"usd": None, "pct": None}
+            usd = round(today_val - prev, 2)
+            pct = round((usd / prev) * 100, 2) if prev else 0
+            return {"usd": usd, "pct": pct}
+
+        return jsonify({
+            "today_value": today_val,
+            "day_gain":   _gain(1),
+            "week_gain":  _gain(7),
+            "month_gain": _gain(30),
+            "year_gain":  _gain(365),
+        })
+    except Exception as e:
+        print(f"Error in /api/investments/performance: {e}")
+        return jsonify({"today_value": None, "day_gain": {}, "week_gain": {}, "month_gain": {}, "year_gain": {}})
+
+@app.route("/api/investments/history", methods=["GET"])
+def api_investments_history():
+    try:
+        year  = request.args.get("year",  type=int)
+        month = request.args.get("month", type=int)
+        if not year or not month:
+            from datetime import date
+            today = date.today()
+            year, month = today.year, today.month
+
+        conn = get_db_connection()
+        cur  = conn.cursor()
+
+        # Fetch the month's snapshots plus the last day of prev month (for day-over-day calc)
+        cur.execute("""
+            SELECT snapshot_date, total_value, total_cost
+            FROM portfolio_snapshots
+            WHERE (EXTRACT(YEAR  FROM snapshot_date) = %s
+                   AND EXTRACT(MONTH FROM snapshot_date) = %s)
+               OR snapshot_date = (
+                   SELECT MAX(snapshot_date) FROM portfolio_snapshots
+                   WHERE snapshot_date < make_date(%s, %s, 1)
+               )
+            ORDER BY snapshot_date ASC
+        """, (year, month, year, month))
+        rows = cur.fetchall()
+        cur.close(); conn.close()
+
+        results = []
+        prev_value = None
+        for r in rows:
+            d     = r["snapshot_date"]
+            val   = float(r["total_value"])
+            cost  = float(r["total_cost"])
+            gain       = round(val - cost, 2)
+            gain_pct   = round((gain / cost * 100) if cost else 0, 2)
+            if prev_value is not None:
+                g_day     = round(val - prev_value, 2)
+                g_day_pct = round((g_day / prev_value * 100) if prev_value else 0, 2)
+            else:
+                g_day = g_day_pct = None
+            prev_value = val
+
+            # Only include days within the requested month
+            if d.month == month and d.year == year:
+                results.append({
+                    "date":                  str(d),
+                    "total_value":           val,
+                    "total_cost":            cost,
+                    "gain":                  gain,
+                    "gain_pct":              gain_pct,
+                    "gain_vs_prev_day":      g_day,
+                    "gain_vs_prev_day_pct":  g_day_pct,
+                })
+
+        return jsonify(results)
+    except Exception as e:
+        print(f"Error in /api/investments/history: {e}")
+        return jsonify([])
+
+@app.route("/api/investments/trade", methods=["POST"])
+def api_investments_trade():
+    data   = request.get_json() or {}
+    action = data.get("action", "").lower()
+    ticker = (data.get("ticker") or "").upper().strip()
+    shares = float(data.get("shares", 0) or 0)
+    price  = data.get("price")
+
+    if not action or not ticker or shares <= 0:
+        return jsonify({"ok": False, "error": "Parámetros inválidos: se requieren action, ticker y shares > 0"}), 400
+    if action not in ("buy", "sell"):
+        return jsonify({"ok": False, "error": "action debe ser 'buy' o 'sell'"}), 400
+
+    try:
+        conn = get_db_connection()
+        cur  = conn.cursor()
+
+        if action == "sell":
+            cur.execute("SELECT shares, avg_cost FROM investments WHERE ticker = %s", (ticker,))
+            row = cur.fetchone()
+            if not row:
+                cur.close(); conn.close()
+                return jsonify({"ok": False, "error": f"No hay posición abierta para {ticker}"}), 404
+            new_shares = round(float(row["shares"]) - shares, 6)
+            if new_shares <= 0:
+                cur.execute("DELETE FROM investments WHERE ticker = %s", (ticker,))
+                result = {"ticker": ticker, "shares": 0, "avg_cost": 0, "deleted": True}
+            else:
+                cur.execute(
+                    "UPDATE investments SET shares = %s WHERE ticker = %s RETURNING shares, avg_cost",
+                    (new_shares, ticker)
+                )
+                r = cur.fetchone()
+                result = {"ticker": ticker, "shares": float(r["shares"]), "avg_cost": float(r["avg_cost"]), "deleted": False}
+
+        else:  # buy
+            if price is None:
+                cur.close(); conn.close()
+                return jsonify({"ok": False, "error": "Se requiere price para compras"}), 400
+            price = float(price)
+            cur.execute("SELECT shares, avg_cost FROM investments WHERE ticker = %s", (ticker,))
+            row = cur.fetchone()
+            if row:
+                prev_shares = float(row["shares"])
+                prev_cost   = float(row["avg_cost"])
+                new_shares  = prev_shares + shares
+                new_avg     = round(((prev_shares * prev_cost) + (shares * price)) / new_shares, 2)
+                cur.execute(
+                    "UPDATE investments SET shares = %s, avg_cost = %s WHERE ticker = %s RETURNING shares, avg_cost",
+                    (new_shares, new_avg, ticker)
+                )
+            else:
+                cur.execute(
+                    "INSERT INTO investments (ticker, shares, avg_cost) VALUES (%s, %s, %s) RETURNING shares, avg_cost",
+                    (ticker, shares, round(price, 2))
+                )
+            r = cur.fetchone()
+            result = {"ticker": ticker, "shares": float(r["shares"]), "avg_cost": float(r["avg_cost"]), "deleted": False}
+
+        conn.commit()
+        cur.close(); conn.close()
+        return jsonify({"ok": True, **result})
+    except Exception as e:
+        print(f"Error in /api/investments/trade: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.route("/api/calendar/month", methods=["GET"])
+def api_calendar_month():
+    try:
+        from calendar_helper import get_calendar_service
+        import calendar as cal_mod
+        year  = int(request.args.get("year",  datetime.datetime.now().year))
+        month = int(request.args.get("month", datetime.datetime.now().month))
+        service = get_calendar_service()
+        if not service:
+            return jsonify([])
+        first_day = datetime.datetime(year, month, 1)
+        last_day  = datetime.datetime(year, month, cal_mod.monthrange(year, month)[1], 23, 59, 59)
+        result = service.events().list(
+            calendarId=os.getenv("GOOGLE_CALENDAR_ID", "primary"),
+            timeMin=first_day.isoformat() + "Z",
+            timeMax=last_day.isoformat() + "Z",
+            singleEvents=True, orderBy="startTime"
+        ).execute()
+        events = []
+        for ev in result.get("items", []):
+            start_raw = ev["start"].get("dateTime", ev["start"].get("date", ""))
+            end_raw   = ev["end"].get("dateTime",   ev["end"].get("date",   ""))
+            events.append({
+                "id":          ev.get("id"),
+                "title":       ev.get("summary", "Sin título"),
+                "description": ev.get("description", ""),
+                "date":        start_raw[:10],
+                "startTime":   start_raw[11:16] if "T" in start_raw else "",
+                "endTime":     end_raw[11:16]   if "T" in end_raw   else "",
+                "allDay":      "T" not in start_raw,
+            })
+        return jsonify(events)
+    except Exception as e:
+        print(f"Error in /api/calendar/month: {e}")
+        return jsonify([])
+
+
+@app.route("/api/calendar/create", methods=["POST"])
+def api_calendar_create():
+    try:
+        from calendar_helper import get_calendar_service
+        data        = request.get_json() or {}
+        title       = (data.get("title") or "").strip()
+        date        = (data.get("date") or "").strip()        # YYYY-MM-DD
+        start_time  = (data.get("startTime") or "").strip()  # HH:MM
+        end_time    = (data.get("endTime") or "").strip()    # HH:MM
+        description = (data.get("description") or "").strip()
+        if not title or not date:
+            return jsonify({"ok": False, "error": "title y date son requeridos"}), 400
+        service = get_calendar_service()
+        if not service:
+            return jsonify({"ok": False, "error": "No se pudo conectar con Google Calendar"}), 503
+        tz_offset = "-06:00"
+        if start_time and end_time:
+            start_iso = f"{date}T{start_time}:00{tz_offset}"
+            end_iso   = f"{date}T{end_time}:00{tz_offset}"
+            start_spec = {"dateTime": start_iso, "timeZone": "America/Monterrey"}
+            end_spec   = {"dateTime": end_iso,   "timeZone": "America/Monterrey"}
+        else:
+            import datetime as _dt
+            next_day = (_dt.date.fromisoformat(date) + _dt.timedelta(days=1)).isoformat()
+            start_spec = {"date": date}
+            end_spec   = {"date": next_day}
+        body = {"summary": title, "start": start_spec, "end": end_spec}
+        if description:
+            body["description"] = description
+        ev = service.events().insert(
+            calendarId=os.getenv("GOOGLE_CALENDAR_ID", "primary"), body=body
+        ).execute()
+        return jsonify({
+            "ok": True,
+            "id":        ev.get("id"),
+            "title":     ev.get("summary"),
+            "htmlLink":  ev.get("htmlLink"),
+        })
+    except Exception as e:
+        print(f"Error in /api/calendar/create: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/calendar/event/<event_id>", methods=["DELETE"])
+def api_calendar_delete(event_id):
+    try:
+        from calendar_helper import get_calendar_service
+        service = get_calendar_service()
+        if not service:
+            return jsonify({"ok": False, "error": "No se pudo conectar con Google Calendar"}), 503
+        service.events().delete(
+            calendarId=os.getenv("GOOGLE_CALENDAR_ID", "primary"),
+            eventId=event_id
+        ).execute()
+        return jsonify({"ok": True})
+    except Exception as e:
+        print(f"Error in /api/calendar/event DELETE: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/mail/send", methods=["POST"])
+def api_mail_send():
+    try:
+        from gmail_helper import send_email
+        data = request.get_json() or {}
+        to      = (data.get("to") or "").strip()
+        subject = (data.get("subject") or "").strip()
+        body    = (data.get("body") or "").strip()
+        if not to or not subject or not body:
+            return jsonify({"ok": False, "error": "to, subject, body son requeridos"}), 400
+        result = send_email(to=to, subject=subject, body=body)
+        if isinstance(result, str) and "Error" in result:
+            return jsonify({"ok": False, "error": result}), 500
+        return jsonify({"ok": True, "message": "Email enviado"})
+    except Exception as e:
+        print(f"Error in /api/mail/send: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+# ─── TRADING AGENT ENDPOINTS ──────────────────────────────────────────────────────
+
+@app.route("/api/trading/config", methods=["POST"])
+def api_trading_config():
+    """Save Binance API credentials (encrypted) and auto_execute preference"""
+    try:
+        data = request.get_json() or {}
+        api_key = (data.get("api_key") or "").strip()
+        api_secret = (data.get("api_secret") or "").strip()
+        auto_execute = data.get("auto_execute", False)
+
+        if not api_key or not api_secret:
+            return jsonify({"ok": False, "error": "api_key y api_secret son requeridos"}), 400
+
+        encrypted_key = _encrypt(api_key)
+        encrypted_secret = _encrypt(api_secret)
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO trading_config (binance_api_key, binance_secret, auto_execute) VALUES (%s, %s, %s) "
+            "ON CONFLICT (id) DO UPDATE SET binance_api_key=%s, binance_secret=%s, auto_execute=%s, updated_at=NOW()",
+            (encrypted_key, encrypted_secret, auto_execute, encrypted_key, encrypted_secret, auto_execute)
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        return jsonify({"ok": True, "message": "Configuración guardada"})
+    except Exception as e:
+        print(f"Error in /api/trading/config: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/trading/config/status", methods=["GET"])
+def api_trading_config_status():
+    """Check if Binance config is set and auto_execute status"""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT id, auto_execute FROM trading_config LIMIT 1")
+        config = cur.fetchone()
+        cur.close()
+        conn.close()
+
+        return jsonify({
+            "ok": True,
+            "configured": config is not None,
+            "auto_execute": config["auto_execute"] if config else False
+        })
+    except Exception as e:
+        print(f"Error in /api/trading/config/status: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/trading/strategy", methods=["POST"])
+def api_trading_strategy():
+    """Save or update a trading strategy"""
+    try:
+        data = request.get_json() or {}
+        name = (data.get("name") or "").strip()
+        prompt = (data.get("prompt") or "").strip()
+        active = data.get("active", False)
+
+        if not name or not prompt:
+            return jsonify({"ok": False, "error": "name y prompt son requeridos"}), 400
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # If active=True, deactivate other strategies
+        if active:
+            cur.execute("UPDATE trading_strategies SET active=FALSE")
+
+        # Insert or update
+        cur.execute(
+            "INSERT INTO trading_strategies (name, prompt, active) VALUES (%s, %s, %s) "
+            "ON CONFLICT (name) DO UPDATE SET prompt=%s, active=%s",
+            (name, prompt, active, prompt, active)
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        return jsonify({"ok": True, "message": "Estrategia guardada"})
+    except Exception as e:
+        print(f"Error in /api/trading/strategy: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/trading/analyze", methods=["POST"])
+def api_trading_analyze():
+    """Analyze market with Claude and create a pending signal"""
+    try:
+        data = request.get_json() or {}
+        asset = (data.get("asset") or "BTC/USDT").strip().upper()
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # Get active strategy
+        cur.execute("SELECT id, prompt FROM trading_strategies WHERE active=TRUE LIMIT 1")
+        strategy = cur.fetchone()
+
+        if not strategy:
+            cur.close()
+            conn.close()
+            return jsonify({"ok": False, "error": "No hay estrategia activa"}), 400
+
+        # Get current price (mock data for MVP)
+        # In production: use Binance API or CoinGecko
+        price = 42500 if asset == "BTC/USDT" else 2300
+        change_24h = 2.5
+
+        # Call Claude with strategy prompt
+        prompt_text = f"""
+        Eres un agente de trading de criptomonedas experimentado.
+
+        Estrategia: {strategy['prompt']}
+
+        Datos de mercado actuales:
+        - Asset: {asset}
+        - Precio actual: ${price}
+        - Cambio 24h: {change_24h}%
+
+        Basado en la estrategia y los datos, responde con un JSON con:
+        {{
+            "action": "buy" | "sell" | "hold",
+            "amount": número,
+            "reasoning": "explicación breve",
+            "confidence": 0-1
+        }}
+        """
+
+        message = anthropic_client.messages.create(
+            model="claude-3-5-sonnet-20241022",
+            max_tokens=500,
+            messages=[{"role": "user", "content": prompt_text}]
+        )
+
+        response_text = message.content[0].text
+        # Extract JSON from response
+        import re
+        json_match = re.search(r'\{[^{}]*\}', response_text, re.DOTALL)
+        if json_match:
+            signal_data = json.loads(json_match.group(0))
+        else:
+            signal_data = {"action": "hold", "amount": 0, "reasoning": response_text, "confidence": 0.5}
+
+        # Insert signal
+        cur.execute(
+            "INSERT INTO trading_signals (asset, action, price, amount, strategy_id, reasoning, status) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            (asset, signal_data.get("action", "hold"), price, signal_data.get("amount", 0),
+             strategy['id'], signal_data.get("reasoning", ""), "pending")
+        )
+        signal_id = cur.fetchone()['id']
+
+        # Auto-execute if auto_execute=True and confidence > 0.8
+        cur.execute("SELECT auto_execute FROM trading_config LIMIT 1")
+        config = cur.fetchone()
+        confidence = signal_data.get("confidence", 0.5)
+
+        if config and config["auto_execute"] and confidence > 0.8:
+            cur.execute(
+                "UPDATE trading_signals SET status=%s, executed_at=%s WHERE id=%s",
+                ("executed", datetime.now(), signal_id)
+            )
+
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        return jsonify({
+            "ok": True,
+            "signal_id": signal_id,
+            "action": signal_data.get("action", "hold"),
+            "amount": signal_data.get("amount", 0),
+            "confidence": confidence,
+            "auto_executed": config and config["auto_execute"] and confidence > 0.8
+        })
+    except Exception as e:
+        print(f"Error in /api/trading/analyze: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/trading/signals", methods=["GET"])
+def api_trading_signals():
+    """Get pending signals for approval"""
+    try:
+        status = request.args.get("status", "pending").strip()
+        limit = int(request.args.get("limit", 10))
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, asset, action, price, amount, reasoning, status, created_at FROM trading_signals "
+            "WHERE status=%s ORDER BY created_at DESC LIMIT %s",
+            (status, limit)
+        )
+        signals = cur.fetchall()
+        cur.close()
+        conn.close()
+
+        return jsonify({
+            "ok": True,
+            "signals": [dict(s) for s in signals]
+        })
+    except Exception as e:
+        print(f"Error in /api/trading/signals: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/trading/execute", methods=["POST"])
+def api_trading_execute():
+    """Approve/reject and execute a signal"""
+    try:
+        data = request.get_json() or {}
+        signal_id = data.get("signal_id")
+        approved = data.get("approved", False)
+
+        if not signal_id:
+            return jsonify({"ok": False, "error": "signal_id es requerido"}), 400
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        if approved:
+            # Mark as executed (in MVP, just update status)
+            # In production: integrate with Binance API
+            cur.execute(
+                "UPDATE trading_signals SET status=%s, executed_at=%s WHERE id=%s",
+                ("executed", datetime.now(), signal_id)
+            )
+        else:
+            # Mark as rejected
+            cur.execute(
+                "UPDATE trading_signals SET status=%s WHERE id=%s",
+                ("rejected", signal_id)
+            )
+
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        return jsonify({"ok": True, "message": "Signal updated"})
+    except Exception as e:
+        print(f"Error in /api/trading/execute: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/trading/history", methods=["GET"])
+def api_trading_history():
+    """Get trading execution history"""
+    try:
+        limit = int(request.args.get("limit", 20))
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, asset, action, price, amount, status, executed_at, created_at FROM trading_signals "
+            "WHERE status IN ('executed', 'rejected') ORDER BY created_at DESC LIMIT %s",
+            (limit,)
+        )
+        history = cur.fetchall()
+        cur.close()
+        conn.close()
+
+        return jsonify({
+            "ok": True,
+            "history": [dict(h) for h in history]
+        })
+    except Exception as e:
+        print(f"Error in /api/trading/history: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
 
 if __name__ == "__main__":
     # Bind to 0.0.0.0 to work on Render, read port from environment (Render sets PORT)
