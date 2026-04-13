@@ -8,10 +8,16 @@ from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
 from cryptography.fernet import Fernet
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
+import jwt as pyjwt
+import bcrypt
 
 # Load environment variables from .env file (for local development)
 load_dotenv()
+
+# ─── AUTH: JWT and bcrypt configuration ────────────────────────────────────────
+JWT_SECRET = os.getenv("JWT_SECRET", "jarvis-dev-secret")
+ADMIN_SECRET = os.getenv("ADMIN_SECRET", "")
 
 app = Flask(__name__)
 CORS(app, resources={r"/chat": {"origins": "*"}, r"/api/*": {"origins": "*"}})
@@ -2309,6 +2315,143 @@ def api_trading_history():
         })
     except Exception as e:
         print(f"Error in /api/trading/history: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+# ─── AUTH ENDPOINTS ────────────────────────────────────────────────────────────
+
+@app.route("/api/auth/register", methods=["POST"])
+def register():
+    """Register a new user (admin only, requires ADMIN_SECRET)"""
+    try:
+        data = request.get_json()
+        email = data.get("email", "").strip()
+        password = data.get("password", "").strip()
+        name = data.get("name", "").strip()
+        admin_secret = data.get("admin_secret", "")
+
+        # Validate admin secret
+        if not ADMIN_SECRET or admin_secret != ADMIN_SECRET:
+            return jsonify({"ok": False, "error": "Invalid admin secret"}), 401
+
+        # Validate inputs
+        if not email or not password:
+            return jsonify({"ok": False, "error": "Email and password required"}), 400
+
+        # Hash password with bcrypt (rounds=12)
+        password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=12)).decode()
+
+        # Insert user into database
+        conn = get_db_connection()
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "INSERT INTO users (email, password_hash, name) VALUES (%s, %s, %s) RETURNING id, email, name",
+                (email, password_hash, name)
+            )
+            user = cur.fetchone()
+            conn.commit()
+            user_id = user['id']
+        except psycopg2.IntegrityError:
+            conn.rollback()
+            cur.close()
+            conn.close()
+            return jsonify({"ok": False, "error": "Email already exists"}), 400
+        finally:
+            cur.close()
+            conn.close()
+
+        # Create JWT token (expires in 24 hours)
+        payload = {
+            "user_id": user_id,
+            "email": user['email'],
+            "name": user['name'],
+            "exp": datetime.utcnow() + timedelta(hours=24)
+        }
+        token = pyjwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+        return jsonify({"ok": True, "token": token}), 201
+    except Exception as e:
+        print(f"Error in /api/auth/register: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/auth/login", methods=["POST"])
+def login():
+    """Login with email and password"""
+    try:
+        data = request.get_json()
+        email = data.get("email", "").strip()
+        password = data.get("password", "").strip()
+
+        if not email or not password:
+            return jsonify({"ok": False, "error": "Email and password required"}), 400
+
+        # Get user from database
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT id, email, name, password_hash FROM users WHERE email = %s", (email,))
+        user = cur.fetchone()
+        cur.close()
+        conn.close()
+
+        if not user:
+            return jsonify({"ok": False, "error": "Invalid email or password"}), 401
+
+        # Verify password with bcrypt
+        if not bcrypt.checkpw(password.encode(), user['password_hash'].encode()):
+            return jsonify({"ok": False, "error": "Invalid email or password"}), 401
+
+        # Create JWT token (expires in 24 hours)
+        payload = {
+            "user_id": user['id'],
+            "email": user['email'],
+            "name": user['name'],
+            "exp": datetime.utcnow() + timedelta(hours=24)
+        }
+        token = pyjwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+        return jsonify({
+            "ok": True,
+            "token": token,
+            "user": {
+                "email": user['email'],
+                "name": user['name']
+            }
+        }), 200
+    except Exception as e:
+        print(f"Error in /api/auth/login: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/auth/verify", methods=["GET"])
+def verify():
+    """Verify JWT token from Authorization header"""
+    try:
+        # Get token from Authorization header
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            return jsonify({"ok": False, "error": "Missing or invalid Authorization header"}), 401
+
+        token = auth_header[7:]  # Remove "Bearer " prefix
+
+        # Decode JWT
+        try:
+            payload = pyjwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+        except pyjwt.ExpiredSignatureError:
+            return jsonify({"ok": False, "error": "Token expired"}), 401
+        except pyjwt.InvalidTokenError:
+            return jsonify({"ok": False, "error": "Invalid token"}), 401
+
+        return jsonify({
+            "ok": True,
+            "user": {
+                "email": payload['email'],
+                "name": payload['name']
+            }
+        }), 200
+    except Exception as e:
+        print(f"Error in /api/auth/verify: {e}")
         return jsonify({"ok": False, "error": str(e)}), 500
 
 

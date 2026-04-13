@@ -16,3 +16,5 @@ beautifulsoup4
 lxml
 cryptography==42.0.5
 python-binance==1.0.19
+PyJWT==2.8.0
+bcrypt==4.1.2
