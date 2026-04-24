@@ -1555,6 +1555,14 @@ def chat():
 
 
 # Healthcheck route useful for Render
+@app.route("/health", methods=["GET"])
+def health():
+    """Health check endpoint."""
+    return jsonify({
+        "status": "ok",
+        "message": "Jarvis backend is running"
+    }), 200
+
 @app.route("/", methods=["GET"])
 def index():
     return "Jarvis AI WhatsApp Assistant is running!", 200
