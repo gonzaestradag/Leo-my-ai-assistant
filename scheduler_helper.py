@@ -145,31 +145,25 @@ def send_hourly_alerts():
     Ensures no duplicate alerts using the email_alerts DB table.
     """
     try:
-        signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(20)  # 20 segundos máximo
-
         print("Executing Hourly Email Alerts Job...")
         from gmail_helper import check_important_emails
         
         important_emails = check_important_emails()
         if not important_emails:
-            signal.alarm(0)
             return
-            
+
         database_url = os.getenv("DATABASE_URL")
         if not database_url:
             print("Error: DATABASE_URL not configured for hourly alerts.")
-            signal.alarm(0)
             return
-            
+
         account_sid = os.getenv("TWILIO_ACCOUNT_SID")
         auth_token = os.getenv("TWILIO_AUTH_TOKEN")
         twilio_number = os.getenv("TWILIO_WHATSAPP_NUMBER")
         target_number = "whatsapp:+5218129354808"
-        
+
         if not all([account_sid, auth_token, twilio_number]):
             print("Error: Twilio credentials not fully configured.")
-            signal.alarm(0)
             return
             
         client = Client(account_sid, auth_token)
@@ -205,9 +199,6 @@ def send_hourly_alerts():
                 
         cur.close()
         conn.close()
-        signal.alarm(0)  # cancelar alarm si termina bien
-    except TimeoutError:
-        print("Hourly alerts skipped due to timeout")
     except Exception as e:
         print(f"Database error in hourly alerts: {e}")
 
