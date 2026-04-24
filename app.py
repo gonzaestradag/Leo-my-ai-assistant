@@ -1311,7 +1311,9 @@ def telegram_webhook():
                 bot_reply = get_text_from_response(response)
 
         except Exception as e:
+            import traceback
             print(f"Error generating response from Claude: {e}")
+            print(f"Traceback: {traceback.format_exc()}")
             bot_reply = "Lo siento, mi cerebro está teniendo problemas para procesar eso en este momento. ¡Por favor intenta de nuevo pronto!"
 
         # Clean up formatting (remove markdown that doesn't work well in Telegram)
