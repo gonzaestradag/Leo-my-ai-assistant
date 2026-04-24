@@ -11,6 +11,10 @@ import signal
 
 executor = ThreadPoolExecutor(max_workers=2)
 
+def timeout_handler(signum, frame):
+    """Handle timeout signals."""
+    raise TimeoutError("Operation timed out")
+
 def run_in_background(func):
     executor.submit(func)
 

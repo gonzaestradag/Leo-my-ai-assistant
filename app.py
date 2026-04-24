@@ -11,6 +11,7 @@ import json
 from datetime import datetime, timedelta
 import jwt as pyjwt
 import bcrypt
+import requests
 
 # Load environment variables from .env file (for local development)
 load_dotenv()
@@ -40,6 +41,23 @@ def is_duplicate(message_sid):
             for sid in oldest:
                 _processed_sids.discard(sid)
         return False
+
+# ─── TELEGRAM: Bot configuration ────────────────────────────────────────────────
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8780189176:AAGxwt5cOdbBc8MhuCJHye9YtXco2VrRvD")
+TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
+
+def send_telegram_message(chat_id, text):
+    """Send a message to Telegram chat."""
+    try:
+        response = requests.post(
+            f"{TELEGRAM_API_URL}/sendMessage",
+            json={"chat_id": chat_id, "text": text},
+            timeout=10
+        )
+        return response.json()
+    except Exception as e:
+        print(f"Error sending Telegram message: {e}")
+        return None
 
 # Start Morning Briefing Scheduler
 from scheduler_helper import start_scheduler
@@ -1252,6 +1270,133 @@ def webhook():
     msg.body(bot_reply)
     
     return str(resp)
+
+@app.route("/telegram", methods=["POST"])
+def telegram_webhook():
+    """
+    Receive incoming Telegram messages via Telegram Bot API webhook (POST /telegram).
+    """
+    try:
+        update = request.get_json()
+        if not update or "message" not in update:
+            return jsonify({"ok": True}), 200
+
+        message = update["message"]
+        chat_id = message["chat"]["id"]
+        incoming_msg = message.get("text", "").strip()
+        sender_number = str(chat_id)  # Use chat_id as identifier
+
+        # Skip if no text message
+        if not incoming_msg:
+            return jsonify({"ok": True}), 200
+
+        # Get conversation history
+        history = get_conversation_history(sender_number, limit=5)
+        history.append({"role": "user", "content": incoming_msg})
+
+        try:
+            # Step 1: Send context to Claude API
+            response = anthropic_client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=1000,
+                system=get_system_prompt(),
+                messages=history,
+                tools=JARVIS_TOOLS
+            )
+
+            # Check if Claude decided to use a tool
+            if response.stop_reason == "tool_use":
+                bot_reply = process_tool_use(response, history, sender_number)
+            else:
+                bot_reply = get_text_from_response(response)
+
+        except Exception as e:
+            print(f"Error generating response from Claude: {e}")
+            bot_reply = "Lo siento, mi cerebro está teniendo problemas para procesar eso en este momento. ¡Por favor intenta de nuevo pronto!"
+
+        # Clean up formatting (remove markdown that doesn't work well in Telegram)
+        import re
+        bot_reply = re.sub(r'\|.*\|', '', bot_reply)  # eliminar tablas
+        bot_reply = re.sub(r'---+', '', bot_reply)  # eliminar divisores
+        bot_reply = re.sub(r'^"(.*)"$', r'\1', bot_reply, flags=re.DOTALL)  # eliminar comillas
+        bot_reply = re.sub(r'\n\s*\n\s*\n', '\n\n', bot_reply)  # máximo 2 saltos de línea
+        bot_reply = bot_reply.strip()
+
+        # Save to Database
+        save_message(sender_number, incoming_msg, bot_reply)
+
+        # Send response via Telegram
+        send_telegram_message(chat_id, bot_reply)
+
+        return jsonify({"ok": True}), 200
+
+    except Exception as e:
+        print(f"Telegram webhook error: {e}")
+        return jsonify({"ok": True}), 200
+
+@app.route("/telegram/setup", methods=["GET"])
+def telegram_setup():
+    """Configure Telegram webhook. Call this once to set up the bot."""
+    try:
+        # Get the server URL from environment or default
+        server_url = os.getenv("SERVER_URL", "https://leo-my-ai-assistant.onrender.com")
+        webhook_url = f"{server_url}/telegram"
+
+        # Set webhook
+        response = requests.post(
+            f"{TELEGRAM_API_URL}/setWebhook",
+            json={"url": webhook_url},
+            timeout=10
+        )
+        result = response.json()
+
+        if result.get("ok"):
+            return jsonify({
+                "ok": True,
+                "message": f"✅ Webhook configurado correctamente",
+                "webhook_url": webhook_url,
+                "result": result
+            }), 200
+        else:
+            return jsonify({
+                "ok": False,
+                "error": result.get("description", "Error desconocido"),
+                "webhook_url": webhook_url
+            }), 400
+    except Exception as e:
+        print(f"Error setting up Telegram webhook: {e}")
+        return jsonify({
+            "ok": False,
+            "error": str(e)
+        }), 500
+
+@app.route("/telegram/test", methods=["GET"])
+def telegram_test():
+    """Test Telegram bot - get bot info."""
+    try:
+        response = requests.get(f"{TELEGRAM_API_URL}/getMe", timeout=10)
+        result = response.json()
+
+        if result.get("ok"):
+            bot_info = result.get("result", {})
+            return jsonify({
+                "ok": True,
+                "bot_name": bot_info.get("first_name"),
+                "bot_username": bot_info.get("username"),
+                "bot_id": bot_info.get("id"),
+                "message": "✅ Bot está activo y funcionando"
+            }), 200
+        else:
+            return jsonify({
+                "ok": False,
+                "error": result.get("description", "Error desconocido")
+            }), 400
+    except Exception as e:
+        print(f"Error testing Telegram bot: {e}")
+        return jsonify({
+            "ok": False,
+            "error": str(e)
+        }), 500
 
 def process_tool_use(response, history, sender_number):
     # Agregar respuesta completa de Claude al historial
