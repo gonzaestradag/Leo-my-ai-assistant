@@ -414,6 +414,109 @@ def take_portfolio_snapshot():
 
 # Track events that have already sent reminders (to avoid duplicates)
 _event_reminders_sent = set()
+_timed_reminders_sent_today = set()  # Track which reminders were already sent today
+
+def send_timed_reminders():
+    """Send user-configured reminders at specific times."""
+    try:
+        from datetime import datetime
+        import requests
+
+        chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
+        if not chat_id:
+            return
+
+        conn = psycopg2.connect(os.getenv("DATABASE_URL"))
+        cur = conn.cursor()
+
+        now = datetime.now()
+        current_time = f"{now.hour:02d}:{now.minute:02d}"
+
+        # Get reminders for current time
+        cur.execute(
+            "SELECT id, message FROM timed_reminders WHERE reminder_time = %s AND phone_number = %s",
+            (current_time, chat_id)  # Using chat_id as identifier
+        )
+        reminders = cur.fetchall()
+
+        for reminder in reminders:
+            reminder_id = reminder[0]
+
+            # Avoid sending same reminder twice
+            if reminder_id in _timed_reminders_sent_today:
+                continue
+
+            _timed_reminders_sent_today.add(reminder_id)
+
+            message = reminder[1]
+            reminder_msg = f"""⏰ *Tu recordatorio*
+
+{message}
+
+¡Recuerda hacerlo! 🚀"""
+
+            response = requests.post(
+                f"https://api.telegram.org/bot{os.getenv('TELEGRAM_BOT_TOKEN')}/sendMessage",
+                json={"chat_id": chat_id, "text": reminder_msg, "parse_mode": "Markdown"},
+                timeout=10
+            )
+
+            if response.status_code == 200:
+                print(f"Timed reminder sent: {message}")
+
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"Error in send_timed_reminders: {e}")
+
+def send_weekly_summary_telegram():
+    """Send summary of pending tasks every Saturday at 10 AM."""
+    try:
+        import requests
+
+        chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
+        if not chat_id:
+            return
+
+        conn = psycopg2.connect(os.getenv("DATABASE_URL"))
+        cur = conn.cursor()
+
+        # Get tasks added this week
+        cur.execute(
+            """SELECT task FROM tasks
+               WHERE phone_number = %s
+               AND created_at >= CURRENT_DATE - INTERVAL '7 days'
+               AND completed = FALSE
+               ORDER BY created_at DESC""",
+            (chat_id,)
+        )
+        pending_tasks = cur.fetchall()
+
+        message = "📋 *Resumen de Pendientes de esta Semana*\n\n"
+
+        if not pending_tasks:
+            message += "✅ ¡No tienes pendientes! Excelente."
+        else:
+            message += f"Tienes {len(pending_tasks)} pendientes:\n\n"
+            for i, task in enumerate(pending_tasks, 1):
+                task_name = task[0][:50]  # Limit length
+                message += f"{i}. {task_name}\n"
+
+        message += "\n💪 ¡Sigue adelante!"
+
+        response = requests.post(
+            f"https://api.telegram.org/bot{os.getenv('TELEGRAM_BOT_TOKEN')}/sendMessage",
+            json={"chat_id": chat_id, "text": message, "parse_mode": "Markdown"},
+            timeout=10
+        )
+
+        if response.status_code == 200:
+            print("Weekly summary sent successfully")
+
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"Error in send_weekly_summary_telegram: {e}")
 
 def send_event_reminders():
     """Send reminders 30 minutes before scheduled events."""
@@ -596,6 +699,12 @@ def start_scheduler():
 
     # ✅ NUEVO: Event reminders - cada minuto verifica eventos en 30 minutos
     _scheduler.add_job(lambda: run_in_background(send_event_reminders), 'interval', minutes=1, id='event_reminders', replace_existing=True)
+
+    # ✅ NUEVO: Timed reminders - cada minuto verifica recordatorios a hora específica
+    _scheduler.add_job(lambda: run_in_background(send_timed_reminders), 'interval', minutes=1, id='timed_reminders', replace_existing=True)
+
+    # ✅ NUEVO: Weekly summary - cada sábado a las 10 AM
+    _scheduler.add_job(lambda: run_in_background(send_weekly_summary_telegram), 'cron', day_of_week=5, hour=10, minute=0, id='weekly_summary', replace_existing=True)
 
     _scheduler.add_job(lambda: run_in_background(cleanup_daily_tasks), 'cron', hour=23, minute=59, id='task_cleanup', replace_existing=True)
     _scheduler.add_job(lambda: run_in_background(send_monthly_report), 'cron', day=1, hour=9, id='monthly_report', replace_existing=True)

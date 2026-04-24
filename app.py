@@ -248,6 +248,43 @@ def get_reminders(phone_number):
     except Exception as e:
         return f"Error: {str(e)}"
 
+def set_timed_reminder(phone_number, message, reminder_time):
+    """Set a reminder for a specific time today (format: HH:MM or 8:30 PM)."""
+    try:
+        from datetime import datetime
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # Parse time (handle formats like "8:00 PM", "20:00", "8 PM", etc)
+        try:
+            # Try parsing with PM/AM
+            if 'PM' in reminder_time.upper() or 'AM' in reminder_time.upper():
+                reminder_dt = datetime.strptime(reminder_time.upper(), "%I:%M %p")
+            else:
+                reminder_dt = datetime.strptime(reminder_time, "%H:%M")
+        except:
+            return f"❌ Formato de hora inválido. Usa: '8:30 PM' o '20:30'"
+
+        # Store in a simple key-value format: "HH:MM|message"
+        reminder_key = f"{reminder_dt.hour:02d}:{reminder_dt.minute:02d}"
+
+        # Insert into reminders table with specific time
+        cur.execute(
+            """INSERT INTO timed_reminders (phone_number, message, reminder_time, created_at)
+               VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
+               ON CONFLICT (phone_number, reminder_time) DO UPDATE
+               SET message = EXCLUDED.message""",
+            (phone_number, message, reminder_key)
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        return f"✅ Recordatorio configurado\n\n⏰ Hora: {reminder_time}\n📌 Mensaje: {message}\n\nTe lo recordaré a esa hora."
+    except Exception as e:
+        return f"Error: {str(e)}"
+
 def add_goal(phone_number, title, description="", target_date=None):
     try:
         conn = get_db_connection()
@@ -777,6 +814,18 @@ JARVIS_TOOLS = [
         "name": "get_reminders",
         "description": "Muestra los recordatorios próximos.",
         "input_schema": {"type": "object", "properties": {}}
+    },
+    {
+        "name": "set_timed_reminder",
+        "description": "Configura un recordatorio para una hora específica del día (ej: 8:30 PM).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "message": {"type": "string", "description": "Mensaje del recordatorio (ej: 'Hacer tarea')"},
+                "reminder_time": {"type": "string", "description": "Hora en formato '8:30 PM' o '20:30'"}
+            },
+            "required": ["message", "reminder_time"]
+        }
     },
     {
         "name": "add_goal",
@@ -1510,6 +1559,8 @@ def execute_tool(tool_name, tool_input, sender_number):
         return add_reminder(phone_number=sender_number, title=tool_input.get("title"), reminder_date=tool_input.get("reminder_date"), description=tool_input.get("description", ""))
     elif tool_name == "get_reminders":
         return get_reminders(phone_number=sender_number)
+    elif tool_name == "set_timed_reminder":
+        return set_timed_reminder(phone_number=sender_number, message=tool_input.get("message"), reminder_time=tool_input.get("reminder_time"))
     elif tool_name == "add_goal":
         return add_goal(phone_number=sender_number, title=tool_input.get("title"), description=tool_input.get("description", ""), target_date=tool_input.get("target_date"))
     elif tool_name == "get_goals":
