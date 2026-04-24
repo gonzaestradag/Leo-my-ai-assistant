@@ -412,6 +412,91 @@ def take_portfolio_snapshot():
     except Exception as e:
         print(f"Error in take_portfolio_snapshot: {e}")
 
+# Track events that have already sent reminders (to avoid duplicates)
+_event_reminders_sent = set()
+
+def send_event_reminders():
+    """Send reminders 30 minutes before scheduled events."""
+    try:
+        from datetime import datetime, timedelta
+        import requests
+
+        # Get chat ID
+        chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
+        if not chat_id:
+            return
+
+        # Get today's events
+        events = get_todays_events()
+        if "No hay eventos" in events or not events.strip():
+            return
+
+        # Parse events and check for upcoming ones
+        now = datetime.now()
+        reminder_window = timedelta(minutes=30)
+        reminder_threshold = timedelta(minutes=25)  # Alert between 25-35 minutes
+
+        # Get events from Google Calendar
+        try:
+            from calendar_helper import get_todays_events as get_calendar_events
+            from google.auth.transport.requests import Request
+            from google.oauth2.credentials import Credentials
+
+            # Simplified: extract event times from the text we already have
+            lines = events.split('\n')
+            for line in lines:
+                if '📅' in line or '🕐' in line or ':' in line:
+                    # Try to extract time and event name
+                    # Format is usually: 🕐 HH:MM - Event Name
+                    try:
+                        # Look for time patterns like "14:30" or "2:30 PM"
+                        import re
+                        time_match = re.search(r'(\d{1,2}):(\d{2})', line)
+                        if time_match:
+                            hour = int(time_match.group(1))
+                            minute = int(time_match.group(2))
+
+                            event_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                            time_until_event = event_time - now
+
+                            # Check if event is within 30-minute reminder window
+                            if timedelta(minutes=20) < time_until_event < timedelta(minutes=35):
+                                event_id = f"{hour}:{minute}"
+
+                                # Avoid sending duplicate reminders
+                                if event_id not in _event_reminders_sent:
+                                    _event_reminders_sent.add(event_id)
+
+                                    # Extract event name
+                                    event_name = line.split('-')[-1].strip() if '-' in line else line.strip()
+                                    event_name = event_name.replace('🕐', '').replace('📅', '').strip()
+
+                                    # Send reminder
+                                    minutes_left = int(time_until_event.total_seconds() / 60)
+                                    reminder_msg = f"""⏰ *Recordatorio de evento*
+
+📌 {event_name}
+🕐 Comienza en {minutes_left} minutos
+
+¡Prepárate! 🚀"""
+
+                                    response = requests.post(
+                                        f"https://api.telegram.org/bot{os.getenv('TELEGRAM_BOT_TOKEN')}/sendMessage",
+                                        json={"chat_id": chat_id, "text": reminder_msg, "parse_mode": "Markdown"},
+                                        timeout=10
+                                    )
+
+                                    if response.status_code == 200:
+                                        print(f"Reminder sent for event: {event_name}")
+                    except Exception as e:
+                        print(f"Error parsing event time: {e}")
+                        continue
+        except Exception as e:
+            print(f"Error getting calendar events: {e}")
+
+    except Exception as e:
+        print(f"Error in send_event_reminders: {e}")
+
 def get_top_news(limit=5):
     """Fetch top news headlines using RSS or web scraping."""
     try:
@@ -508,6 +593,9 @@ def start_scheduler():
 
     # ✅ NUEVO: Morning briefing para Telegram a las 7:30 AM
     _scheduler.add_job(lambda: run_in_background(send_morning_briefing_telegram), 'cron', hour=7, minute=30, id='morning_briefing_telegram', replace_existing=True)
+
+    # ✅ NUEVO: Event reminders - cada minuto verifica eventos en 30 minutos
+    _scheduler.add_job(lambda: run_in_background(send_event_reminders), 'interval', minutes=1, id='event_reminders', replace_existing=True)
 
     _scheduler.add_job(lambda: run_in_background(cleanup_daily_tasks), 'cron', hour=23, minute=59, id='task_cleanup', replace_existing=True)
     _scheduler.add_job(lambda: run_in_background(send_monthly_report), 'cron', day=1, hour=9, id='monthly_report', replace_existing=True)
