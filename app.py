@@ -43,7 +43,7 @@ def is_duplicate(message_sid):
         return False
 
 # ─── TELEGRAM: Bot configuration ────────────────────────────────────────────────
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8780189176:AAGxwt5cOdbBc8MhuCJHye9YtXco2VrRvD")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8780189176:AAGxwt5cOdbBc8MhuCJHye9YtXco2VrRvDs")
 TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
 def send_telegram_message(chat_id, text):
