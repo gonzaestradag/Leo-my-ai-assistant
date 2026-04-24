@@ -1400,6 +1400,34 @@ def telegram_test():
             "error": str(e)
         }), 500
 
+@app.route("/telegram/disable", methods=["GET"])
+def telegram_disable():
+    """Disable Telegram webhook to stop consuming credits."""
+    try:
+        response = requests.post(
+            f"{TELEGRAM_API_URL}/deleteWebhook",
+            json={},
+            timeout=10
+        )
+        result = response.json()
+
+        if result.get("ok"):
+            return jsonify({
+                "ok": True,
+                "message": "✅ Webhook de Telegram desactivado. El bot no consumirá más créditos."
+            }), 200
+        else:
+            return jsonify({
+                "ok": False,
+                "error": result.get("description", "Error desconocido")
+            }), 400
+    except Exception as e:
+        print(f"Error disabling Telegram webhook: {e}")
+        return jsonify({
+            "ok": False,
+            "error": str(e)
+        }), 500
+
 def process_tool_use(response, history, sender_number):
     # Agregar respuesta completa de Claude al historial
     history.append({
