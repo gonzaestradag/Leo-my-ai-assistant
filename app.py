@@ -1565,7 +1565,7 @@ def health():
 
 @app.route("/", methods=["GET"])
 def index():
-    return "Jarvis AI WhatsApp Assistant is running!", 200
+    return "Jarvis AI Telegram Assistant is running! 🤖", 200
 
 # ─── Dashboard REST API ───────────────────────────────────────────────────────
 
