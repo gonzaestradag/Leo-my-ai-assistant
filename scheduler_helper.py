@@ -418,10 +418,11 @@ def start_scheduler():
         return _scheduler
 
     _scheduler = BackgroundScheduler(timezone='America/Mexico_City')
-    _scheduler.add_job(lambda: run_in_background(ask_sleep_checkin), 'cron', hour=7, minute=0, id='sleep_checkin', replace_existing=True)
-    _scheduler.add_job(lambda: run_in_background(send_morning_briefing), 'cron', hour=8, minute=20, id='morning_briefing', replace_existing=True)
-    _scheduler.add_job(lambda: run_in_background(send_hourly_alerts), 'cron', minute=0, id='hourly_alerts', replace_existing=True)
-    _scheduler.add_job(lambda: run_in_background(send_evening_summary), 'cron', hour=22, minute=0, id='evening_summary', replace_existing=True)
+    # ❌ DESACTIVADO: Migramos a Telegram - estos jobs consumían créditos en WhatsApp
+    # _scheduler.add_job(lambda: run_in_background(ask_sleep_checkin), 'cron', hour=7, minute=0, id='sleep_checkin', replace_existing=True)
+    # _scheduler.add_job(lambda: run_in_background(send_morning_briefing), 'cron', hour=8, minute=20, id='morning_briefing', replace_existing=True)
+    # _scheduler.add_job(lambda: run_in_background(send_hourly_alerts), 'cron', minute=0, id='hourly_alerts', replace_existing=True)
+    # _scheduler.add_job(lambda: run_in_background(send_evening_summary), 'cron', hour=22, minute=0, id='evening_summary', replace_existing=True)
     _scheduler.add_job(lambda: run_in_background(cleanup_daily_tasks), 'cron', hour=23, minute=59, id='task_cleanup', replace_existing=True)
     _scheduler.add_job(lambda: run_in_background(send_monthly_report), 'cron', day=1, hour=9, id='monthly_report', replace_existing=True)
     _scheduler.add_job(lambda: run_in_background(check_daily_reminders), 'cron', hour=9, minute=0, id='daily_reminders', replace_existing=True)
