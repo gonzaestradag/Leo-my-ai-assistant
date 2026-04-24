@@ -412,6 +412,88 @@ def take_portfolio_snapshot():
     except Exception as e:
         print(f"Error in take_portfolio_snapshot: {e}")
 
+def get_top_news(limit=5):
+    """Fetch top news headlines using RSS or web scraping."""
+    try:
+        import requests
+        from datetime import datetime
+
+        # Try to get news from a free API or RSS feed
+        # Using a simple approach: fetch from BBC News RSS
+        url = "http://feeds.bbc.co.uk/news/rss.xml"
+        response = requests.get(url, timeout=10)
+
+        if response.status_code == 200:
+            import xml.etree.ElementTree as ET
+            root = ET.fromstring(response.content)
+
+            news = []
+            for item in root.findall('.//item')[:limit]:
+                title_elem = item.find('title')
+                title = title_elem.text if title_elem is not None else "Sin título"
+                news.append(title)
+
+            return news[:limit] if news else ["No se pudieron obtener noticias"]
+        else:
+            return ["No se pudieron obtener noticias en este momento"]
+    except Exception as e:
+        print(f"Error getting news: {e}")
+        return ["No se pudieron obtener noticias en este momento"]
+
+def send_morning_briefing_telegram():
+    """Send morning briefing to Telegram: agenda + top 5 news."""
+    try:
+        # Get today's events
+        events = get_todays_events()
+
+        # Get top 5 news
+        news = get_top_news(limit=5)
+
+        # Get chat ID from environment (Leo's Telegram chat ID)
+        chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
+        if not chat_id:
+            print("Error: TELEGRAM_CHAT_ID not configured")
+            return
+
+        # Format message for Telegram (with markdown)
+        message = f"""🌅 *Buenos días Leo*
+
+*Tu agenda de hoy:*
+"""
+
+        if "No hay eventos" in events or not events.strip():
+            message += "✅ Sin compromisos, ¡día libre!"
+        else:
+            message += events
+
+        message += f"""
+
+*📰 Top 5 Noticias de hoy:*
+"""
+
+        for i, headline in enumerate(news, 1):
+            # Limit headline length for Telegram
+            headline = headline[:80] + "..." if len(headline) > 80 else headline
+            message += f"{i}. {headline}\n"
+
+        message += "\n¿En qué puedo ayudarte hoy? 🚀"
+
+        # Send via Telegram
+        import requests
+        response = requests.post(
+            f"https://api.telegram.org/bot{os.getenv('TELEGRAM_BOT_TOKEN')}/sendMessage",
+            json={"chat_id": chat_id, "text": message, "parse_mode": "Markdown"},
+            timeout=10
+        )
+
+        if response.status_code == 200:
+            print("Morning briefing sent to Telegram successfully")
+        else:
+            print(f"Error sending morning briefing: {response.text}")
+
+    except Exception as e:
+        print(f"Error in send_morning_briefing_telegram: {e}")
+
 def start_scheduler():
     global _scheduler
     if _scheduler is not None and _scheduler.running:
@@ -423,6 +505,10 @@ def start_scheduler():
     # _scheduler.add_job(lambda: run_in_background(send_morning_briefing), 'cron', hour=8, minute=20, id='morning_briefing', replace_existing=True)
     # _scheduler.add_job(lambda: run_in_background(send_hourly_alerts), 'cron', minute=0, id='hourly_alerts', replace_existing=True)
     # _scheduler.add_job(lambda: run_in_background(send_evening_summary), 'cron', hour=22, minute=0, id='evening_summary', replace_existing=True)
+
+    # ✅ NUEVO: Morning briefing para Telegram a las 7:30 AM
+    _scheduler.add_job(lambda: run_in_background(send_morning_briefing_telegram), 'cron', hour=7, minute=30, id='morning_briefing_telegram', replace_existing=True)
+
     _scheduler.add_job(lambda: run_in_background(cleanup_daily_tasks), 'cron', hour=23, minute=59, id='task_cleanup', replace_existing=True)
     _scheduler.add_job(lambda: run_in_background(send_monthly_report), 'cron', day=1, hour=9, id='monthly_report', replace_existing=True)
     _scheduler.add_job(lambda: run_in_background(check_daily_reminders), 'cron', hour=9, minute=0, id='daily_reminders', replace_existing=True)
